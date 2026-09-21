@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help setup proto lint fmt typecheck test check web-install web-lint web-build tts-engine worker-story up down logs clean
+.PHONY: help setup proto lint fmt typecheck test test-integration check web-install web-lint \n        web-build tts-engine worker-story worker-tts up up-gpu down logs clean
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
@@ -24,8 +24,11 @@ fmt: ## Apply ruff fixes and formatting
 typecheck: ## Mypy (strict)
 	uv run mypy packages services
 
-test: ## Unit tests
+test: ## Unit tests (no Docker, no network)
 	uv run pytest tests/unit -m "not integration and not e2e" --timeout=120
+
+test-integration: ## End-to-end tests against a running compose stack
+	uv run pytest tests/integration -m integration --timeout=900
 
 check: lint typecheck test web-lint web-build ## Everything CI runs
 
@@ -41,11 +44,17 @@ web-build: ## Production build of the frontend
 tts-engine: ## Run the TTS engine (stub backend unless TTS_BACKEND=xtts)
 	uv run --project services/tts_engine python -m tts_engine
 
+worker-tts: ## Run the TTS worker against the local broker
+	uv run --package story2audio-tts-worker celery -A tts_worker.app:celery_app worker \n		--queues tts --concurrency 1 --loglevel info
+
 worker-story: ## Run the story worker against the local broker
 	uv run --package story2audio-story-worker celery -A story_worker.app:celery_app worker \n		--queues story --concurrency 2 --loglevel info
 
-up: ## Bring up the local stack (Phase 5)
+up: ## Bring up the local stack (stub TTS; no GPU needed)
 	docker compose -f infra/docker-compose.yml up --build
+
+up-gpu: ## Bring up the local stack with real XTTS on a local GPU
+	docker compose -f infra/docker-compose.yml -f infra/docker-compose.gpu.yml up --build
 
 down: ## Tear down the local stack
 	docker compose -f infra/docker-compose.yml down -v

@@ -1,0 +1,234 @@
+# The full local stack.
+#
+#     docker compose -f infra/docker-compose.yml up --build
+#
+# Brings up Postgres, Redis, MinIO and all four services. The TTS engine runs its stub
+# backend by default, which renders a tone rather than speech — enough to exercise the
+# entire pipeline on a machine with no GPU. Add the GPU overlay for real synthesis:
+#
+#     docker compose -f infra/docker-compose.yml -f infra/docker-compose.gpu.yml up
+#
+# One process per container, each with its own healthcheck. v1 ran the gRPC server and
+# Streamlit in a single container from a two-line shell script, so if the server died the
+# container stayed up and every request failed.
+
+name: story2audio
+
+x-python-build: &python-build
+  context: ..
+  dockerfile: infra/Dockerfile.python
+
+x-app-env: &app-env
+  ENVIRONMENT: local
+  LOG_LEVEL: info
+  LOG_FORMAT: console
+  DATABASE_URL: postgresql+asyncpg://story2audio:story2audio@postgres:5432/story2audio
+  DATABASE_URL_SYNC: postgresql+psycopg://story2audio:story2audio@postgres:5432/story2audio
+  REDIS_URL: redis://redis:6379/0
+  CELERY_BROKER_URL: redis://redis:6379/1
+  CELERY_RESULT_BACKEND: redis://redis:6379/2
+  S3_ENDPOINT_URL: http://minio:9000
+  S3_BUCKET: story2audio
+  S3_ACCESS_KEY_ID: minioadmin
+  S3_SECRET_ACCESS_KEY: minioadmin
+  S3_FORCE_PATH_STYLE: "true"
+
+services:
+  # --- Infrastructure ---------------------------------------------------------------------
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: story2audio
+      POSTGRES_PASSWORD: story2audio
+      POSTGRES_DB: story2audio
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      # Dependants wait on this, so a worker cannot start against a database that is
+      # still initialising and fail its first task.
+      test: ["CMD-SHELL", "pg_isready -U story2audio -d story2audio"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  minio:
+    image: minio/minio:latest
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"  # web console
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # --- One-shot setup ----------------------------------------------------------------------
+
+  migrate:
+    build:
+      <<: *python-build
+      args:
+        PACKAGE: story2audio-gateway
+    environment: *app-env
+    working_dir: /app/services/gateway
+    # Migrations are owned solely by the gateway (ADR-0001); workers never issue DDL.
+    # Seeding is idempotent, so this can run on every `up`.
+    command: >
+      sh -c "alembic upgrade head &&
+             cd /app && python -m gateway.seed"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    restart: "no"
+
+  # --- Application ---------------------------------------------------------------------------
+
+  gateway:
+    build:
+      <<: *python-build
+      args:
+        PACKAGE: story2audio-gateway
+    environment:
+      <<: *app-env
+      GATEWAY_HOST: 0.0.0.0
+      GATEWAY_PORT: "8000"
+      CORS_ALLOW_ORIGINS: http://localhost:5173,http://localhost:8000
+      PUBLIC_WEB_ORIGIN: http://localhost:5173
+      SESSION_SECRET: local-development-secret-not-for-deployment
+      JOB_DISPATCH: celery
+    ports:
+      - "8000:8000"
+    command:
+      - uvicorn
+      - gateway.main:app
+      - --factory
+      - --host=0.0.0.0
+      - --port=8000
+      # Protocol pings keep an idle job-events socket alive without any application-level
+      # heartbeat for the client to parse.
+      - --ws-ping-interval=20
+      - --ws-ping-timeout=20
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      # Liveness only, by design: readiness is /readyz, and restarting the API because
+      # Redis blipped would turn a degradation into an outage.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  story-worker:
+    build:
+      <<: *python-build
+      args:
+        PACKAGE: story2audio-story-worker
+    environment:
+      <<: *app-env
+      # Offline by default: no API key required to run the stack. Set LLM_PROVIDER=groq
+      # and GROQ_API_KEY in a .env to use the hosted path.
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      LLM_MODEL: ${LLM_MODEL:-llama3}
+      # host.docker.internal reaches an Ollama daemon running on the host, which is where
+      # it lives -- v1 assumed the same thing but never wrote it down anywhere.
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+    command:
+      - celery
+      - -A
+      - story_worker.app:celery_app
+      - worker
+      - --queues=story
+      - --concurrency=2
+      - --loglevel=info
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  tts-worker:
+    build:
+      <<: *python-build
+      args:
+        PACKAGE: story2audio-tts-worker
+    environment:
+      <<: *app-env
+      TTS_ENGINE_ADDRESS: tts-engine:50051
+    command:
+      - celery
+      - -A
+      - tts_worker.app:celery_app
+      - worker
+      - --queues=tts
+      # One at a time: the GPU behind this is the scarce resource, and the engine refuses
+      # excess demand rather than queueing it invisibly.
+      - --concurrency=1
+      - --loglevel=info
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      tts-engine:
+        condition: service_started
+      migrate:
+        condition: service_completed_successfully
+
+  tts-engine:
+    build:
+      context: ..
+      dockerfile: services/tts_engine/Dockerfile
+      # Slim Python, no torch. The GPU overlay switches this to the `gpu` target.
+      target: runtime
+    environment:
+      ENVIRONMENT: local
+      LOG_LEVEL: info
+      TTS_ENGINE_HOST: 0.0.0.0
+      TTS_ENGINE_PORT: "50051"
+      # A tone, not speech. Overridden by docker-compose.gpu.yml, and refused outright
+      # when ENVIRONMENT=production.
+      TTS_BACKEND: ${TTS_BACKEND:-stub}
+      TTS_DEVICE: ${TTS_DEVICE:-cpu}
+    ports:
+      - "50051:50051"
+
+volumes:
+  postgres-data:
+  minio-data:

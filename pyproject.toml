@@ -63,7 +63,11 @@ exclude = ["*.md"]
 #     `[PARA_LEVEL:1-3]` sentinel, whose exact character is part of the bug described;
 #   - this is a multilingual app, so full-width and non-Latin sentence punctuation is
 #     real domain data, not a typo (see prompts._TERMINAL_PUNCTUATION).
-allowed-confusables = ["–", "—", "！", "？", "’", "”", "»", "؟"]
+allowed-confusables = [
+    "–", "—",                      # en/em dash, quoted from v1 literals
+    "！", "？", "؟",                 # full-width and Arabic sentence punctuation
+    "‘", "’", "“", "”", "»",        # curly quotes -- real input, models emit them
+]
 select = [
     "E", "W",   # pycodestyle
     "F",        # pyflakes
@@ -101,7 +105,7 @@ exclude = ["^legacy/", "_pb2\\.py$", "_pb2_grpc\\.py$"]
 
 [[tool.mypy.overrides]]
 # torch and coqui-tts are installed only in the GPU image, behind an optional extra.
-module = ["pydub.*", "celery.*", "soundfile.*", "TTS.*", "torch.*", "grpc_health.*"]
+module = ["celery.*", "soundfile.*", "TTS.*", "torch.*", "grpc_health.*", "lameenc.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
