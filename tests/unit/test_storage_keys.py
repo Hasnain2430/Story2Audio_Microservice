@@ -9,6 +9,7 @@ impossible.
 from __future__ import annotations
 
 import pytest
+
 from story2audio_shared.enums import AudioFormat
 from story2audio_shared.ids import uuid7
 from story2audio_shared.storage import AUDIO_PREFIX, VOICE_PREFIX, audio_key, voice_key

@@ -27,6 +27,11 @@ dev = [
     "pytest-cov>=6.0",
     "types-boto3[s3]>=1.35",
     "pre-commit>=4.0",
+    "aiosqlite>=0.20",
+    "fakeredis[lua]>=2.26",
+    "httpx>=0.28",
+    "httpx-ws>=0.7",
+    "pytest-timeout>=2.3",
 ]
 
 [tool.ruff]
@@ -66,6 +71,11 @@ select = [
 ignore = [
     "S101",  # assert is fine in tests
 ]
+
+[tool.ruff.lint.isort]
+# Workspace packages are first-party even though they install like any other dependency;
+# without this they sort in with third-party imports.
+known-first-party = ["story2audio_shared", "gateway", "story_worker", "tts_worker", "tts_engine"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "S105", "S106"]

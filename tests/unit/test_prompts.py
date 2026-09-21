@@ -8,6 +8,7 @@ escape its delimiters.
 from __future__ import annotations
 
 import pytest
+
 from story2audio_shared.enums import Emotion, Language, StoryLength, VoiceMode
 from story2audio_shared.prompts import (
     EMOTION_GUIDANCE,

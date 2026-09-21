@@ -56,6 +56,10 @@ class StatusEvent(BaseEvent):
 
     type: Literal["status"] = "status"
     status: JobStatus
+    #: True when this frame is the connect-time snapshot rather than a live transition.
+    #: A snapshot reuses the job's current sequence number instead of allocating a new
+    #: one, so the client must not treat its `seq` as evidence of a gap.
+    snapshot: bool = False
 
 
 class TokenEvent(BaseEvent):

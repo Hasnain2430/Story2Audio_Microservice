@@ -38,7 +38,9 @@ jobs:
         run: uv run mypy packages services
 
       - name: Pytest
-        run: uv run pytest tests/unit -m "not integration and not e2e"
+        # --timeout guards against a hung WebSocket or dispatcher task wedging CI
+        # instead of failing it.
+        run: uv run pytest tests/unit -m "not integration and not e2e" --timeout=120
 
   web:
     name: web (lint · typecheck · build)

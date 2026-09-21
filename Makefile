@@ -21,7 +21,7 @@ typecheck: ## Mypy (strict)
 	uv run mypy packages services
 
 test: ## Unit tests
-	uv run pytest tests/unit -m "not integration and not e2e"
+	uv run pytest tests/unit -m "not integration and not e2e" --timeout=120
 
 check: lint typecheck test web-lint web-build ## Everything CI runs
 

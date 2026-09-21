@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 
 import pytest
 from pydantic import ValidationError
+
 from story2audio_shared.enums import AudioFormat, JobStatus
 from story2audio_shared.errors import ErrorCode
 from story2audio_shared.events import (

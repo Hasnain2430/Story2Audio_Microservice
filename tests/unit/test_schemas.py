@@ -11,6 +11,7 @@ from uuid import uuid4
 
 import pytest
 from pydantic import ValidationError
+
 from story2audio_shared.enums import (
     AudioFormat,
     Emotion,

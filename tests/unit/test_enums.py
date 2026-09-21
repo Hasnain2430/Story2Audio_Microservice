@@ -9,6 +9,7 @@ from __future__ import annotations
 from itertools import pairwise
 
 import pytest
+
 from story2audio_shared.enums import (
     ALLOWED_TRANSITIONS,
     CANCELLABLE_STATUSES,

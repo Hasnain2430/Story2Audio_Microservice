@@ -7,6 +7,7 @@ internal-detail-free message. v1 returned `str(exception)` verbatim.
 from __future__ import annotations
 
 import pytest
+
 from story2audio_shared.errors import AppError, ErrorCode, is_retryable, spec_for
 
 
