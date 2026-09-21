@@ -11,6 +11,34 @@ recomputed for every segment — twelve times over for a twelve-segment dialogue
 XTTS v2 accepts and ignores it, so the control changed nothing audible. Emotion now
 steers the writing instead, where it demonstrably changes the output.
 
+**Generation settings come from the model config, not from the method defaults.** This
+was a real regression, and it is worth stating plainly because reaching past the
+high-level wrapper is what caused it. ``Xtts.synthesize`` -- the path ``tts_to_file``
+takes, and therefore the path v1 took -- does not call ``inference`` with its declared
+defaults. It overrides them from ``config`` first, under the comment "Use generally found
+best tuning knobs for generation". Calling ``inference`` and ``get_conditioning_latents``
+directly skips that layer and silently picks up the raw defaults, which differ sharply:
+
+==========================  ==========  ===========
+setting                     config      raw default
+==========================  ==========  ===========
+``repetition_penalty``      5.0         10.0
+``gpt_cond_len``            30          6
+``gpt_cond_chunk_len``      4           6
+==========================  ==========  ===========
+
+Those are the values in the *downloaded* ``config.json``, which is what matters: it
+overrides the defaults declared on ``XttsConfig``, so reading the dataclass is not the
+same as reading the model. They are taken from ``model.config`` here for that reason.
+
+``repetition_penalty`` at twice its intended value is the audible one -- it over-penalises
+repeated tokens, and XTTS answers by rushing, slurring and dropping words. The
+conditioning is the other half: 6 seconds of reference instead of 30, and with
+``gpt_cond_len == gpt_cond_chunk_len`` no chunk averaging at all, which Coqui documents as
+what makes the latents stable.
+
+Optimising away the wrapper is fine. Optimising away the tuning it applied was not.
+
 torch and coqui-tts are imported inside :meth:`load` rather than at module scope, so this
 module can be imported — and the rest of the service tested — on a machine that has
 neither installed.
@@ -68,6 +96,9 @@ class XttsBackend:
         self._chunk_bytes = chunk_bytes
         self._model: Any = None
         self._torch: Any = None
+        # Populated from the model config at load; see the module docstring.
+        self._voice_settings: dict[str, Any] = {}
+        self._inference_settings: dict[str, Any] = {}
 
     @property
     def ready(self) -> bool:
@@ -106,6 +137,7 @@ class XttsBackend:
                 model = model.half()
 
             self._model = model.to(self.device)
+            self._read_settings(model.config)
         except torch.cuda.OutOfMemoryError as exc:
             free, total = torch.cuda.mem_get_info()
             raise SynthesisError(
@@ -119,12 +151,43 @@ class XttsBackend:
             model=self.model,
             device=self.device,
             precision="fp16" if self._use_half else "fp32",
+            **self._inference_settings,
+            **self._voice_settings,
             vram_allocated_gb=(
                 round(torch.cuda.memory_allocated() / 1e9, 2)
                 if self.device.startswith("cuda")
                 else None
             ),
         )
+
+    def _read_settings(self, config: Any) -> None:
+        """Mirror the settings ``Xtts.synthesize`` applies before calling ``inference``.
+
+        Same keys, same source, read once. The fallbacks are the shipped ``config.json``
+        values, not the raw method defaults, so a config missing a key degrades to the
+        tuned number rather than back to the untuned one this method exists to avoid.
+        """
+        voice_defaults = {
+            "gpt_cond_len": 30,
+            "gpt_cond_chunk_len": 4,
+            "max_ref_len": 30,
+            "sound_norm_refs": False,
+        }
+        settings = {key: getattr(config, key, fallback) for key, fallback in voice_defaults.items()}
+        # `get_conditioning_latents` spells this one differently from the config.
+        settings["max_ref_length"] = settings.pop("max_ref_len")
+        self._voice_settings = settings
+
+        inference_defaults = {
+            "temperature": 0.75,
+            "length_penalty": 1.0,
+            "repetition_penalty": 5.0,
+            "top_k": 50,
+            "top_p": 0.85,
+        }
+        self._inference_settings = {
+            key: getattr(config, key, fallback) for key, fallback in inference_defaults.items()
+        }
 
     def embed(self, voice_id: str, reference_wav: bytes) -> SpeakerEmbedding:
         """Compute the conditioning latents for one voice.
@@ -140,7 +203,7 @@ class XttsBackend:
         try:
             with self._inference_context():
                 gpt_cond_latent, speaker_embedding = self._model.get_conditioning_latents(
-                    audio_path=[path]
+                    audio_path=[path], **self._voice_settings
                 )
         except Exception as exc:
             raise SynthesisError(f"could not embed voice {voice_id}: {exc}") from exc
@@ -172,7 +235,16 @@ class XttsBackend:
 
         try:
             with self._inference_context():
-                stream = self._model.inference_stream(
+                # `inference`, not `inference_stream`. Streaming decodes the GPT output in
+                # fixed-size chunks and vocodes each one separately, crossfading a 1024
+                # sample overlap between them -- cheaper to first byte, but it is a
+                # different and worse signal than decoding the segment whole.
+                #
+                # Nothing here needed the earlier bytes earlier. The worker stitches the
+                # segments and uploads a finished file; no one is listening while it
+                # renders, and progress is already reported per segment. So streaming
+                # bought latency that had no consumer and paid for it in quality.
+                result = self._model.inference(
                     text,
                     language,
                     gpt_cond_latent,
@@ -184,9 +256,9 @@ class XttsBackend:
                     # audio a second time, and Coqui's splitter pulls in Spacy as a
                     # dependency the engine otherwise does not need.
                     enable_text_splitting=False,
+                    **self._inference_settings,
                 )
-                for tensor in stream:
-                    yield from self._to_pcm_chunks(tensor)
+            yield from self._to_pcm_chunks(result["wav"])
         except Exception as exc:
             raise SynthesisError(f"synthesis failed: {exc}") from exc
 
@@ -206,13 +278,19 @@ class XttsBackend:
         )
         return autocast
 
-    def _to_pcm_chunks(self, tensor: Any) -> Iterator[bytes]:
-        """Convert one model output tensor to bounded little-endian PCM16 chunks."""
+    def _to_pcm_chunks(self, waveform: Any) -> Iterator[bytes]:
+        """Convert a model output waveform to bounded little-endian PCM16 chunks.
+
+        `inference` hands back a numpy array; accepting a tensor too keeps this usable
+        from any other call path without a second conversion helper.
+        """
         import numpy as np
 
-        # `.float()` before `.numpy()`: a half-precision tensor has no direct numpy
-        # dtype on every platform, and the conversion below assumes float32 range.
-        samples: np.ndarray[Any, Any] = tensor.detach().float().to("cpu").numpy().reshape(-1)
+        if hasattr(waveform, "detach"):
+            # `.float()` before `.numpy()`: a half-precision tensor has no direct numpy
+            # dtype on every platform, and the conversion below assumes float32 range.
+            waveform = waveform.detach().float().to("cpu").numpy()
+        samples: np.ndarray[Any, Any] = np.asarray(waveform, dtype="float32").reshape(-1)
         # Clip before casting: XTTS occasionally overshoots and a wraparound is an
         # audible crack rather than a clipped peak.
         clipped = np.clip(samples, -1.0, 1.0)

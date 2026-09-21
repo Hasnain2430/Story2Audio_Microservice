@@ -4,8 +4,14 @@ Reads the reference pack in ``assets/voices`` — carried over from v1, where it
 ``voices/`` and was addressed by filesystem path — uploads each sample to object storage,
 and registers it as a built-in voice with no owner.
 
-Idempotent: a voice already present by name is left alone, so this can run on every
-deploy rather than needing to be remembered once.
+Idempotent: a voice already present by name keeps its id and row, so this can run on
+every deploy rather than needing to be remembered once.
+
+It does refresh the stored sample when the configured clip length grows. The clip is the
+reference XTTS conditions on, so lengthening it improves every clone made afterwards --
+but only for voices seeded after the change, unless the existing ones are re-clipped.
+Deleting and re-adding them would orphan the jobs that reference them, so the object is
+rewritten under the same key and the row updated in place.
 
 Run with::
 
@@ -62,10 +68,10 @@ def _discover() -> dict[str, Path]:
     return found
 
 
-async def seed_builtin_voices() -> int:
+async def seed_builtin_voices() -> tuple[int, int]:
     """Register every built-in voice that is not already present.
 
-    Returns the number of voices added.
+    Returns the number added and the number whose stored clip was lengthened.
     """
     limits = limit_settings()
     storage = ObjectStorage(storage_settings())
@@ -74,15 +80,16 @@ async def seed_builtin_voices() -> int:
     engine = create_engine()
     session_factory = create_session_factory(engine)
     added = 0
+    refreshed = 0
 
     try:
         async with session_factory() as session:
             for name, path in sorted(_discover().items()):
-                existing = await session.scalar(
-                    select(Voice.id).where(Voice.name == name, Voice.is_builtin.is_(True))
-                )
-                if existing is not None:
-                    continue
+                existing = (
+                    await session.scalars(
+                        select(Voice).where(Voice.name == name, Voice.is_builtin.is_(True))
+                    )
+                ).one_or_none()
 
                 try:
                     validated = validate_voice_upload(
@@ -99,6 +106,28 @@ async def seed_builtin_voices() -> int:
                     )
                 except AppError as exc:
                     log.warning("builtin_voice_rejected", name=name, reason=exc.code.value)
+                    continue
+
+                if existing is not None:
+                    # Only when there is genuinely more reference to store. A tenth of a
+                    # second of slack absorbs the rounding in frames-to-seconds so that a
+                    # no-op deploy does not rewrite every object.
+                    if validated.duration_seconds > existing.duration_seconds + 0.1:
+                        storage.put_bytes(
+                            existing.storage_key,
+                            validated.wav_bytes,
+                            content_type="audio/wav",
+                        )
+                        previous = existing.duration_seconds
+                        existing.duration_seconds = validated.duration_seconds
+                        existing.sample_rate = validated.sample_rate
+                        refreshed += 1
+                        log.info(
+                            "builtin_voice_refreshed",
+                            name=name,
+                            was_seconds=round(previous, 2),
+                            now_seconds=round(validated.duration_seconds, 2),
+                        )
                     continue
 
                 voice_id = uuid7()
@@ -127,13 +156,13 @@ async def seed_builtin_voices() -> int:
     finally:
         await engine.dispose()
 
-    return added
+    return added, refreshed
 
 
 def main() -> None:
     configure_logging()
-    added = asyncio.run(seed_builtin_voices())
-    log.info("seed_complete", added=added)
+    added, refreshed = asyncio.run(seed_builtin_voices())
+    log.info("seed_complete", added=added, refreshed=refreshed)
 
 
 if __name__ == "__main__":

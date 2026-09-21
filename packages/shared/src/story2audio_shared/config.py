@@ -127,7 +127,11 @@ class LimitSettings(BaseSettings):
     #: engine over gRPC -- where a 30-second 48 kHz stereo file (5.7 MB) exceeds the
     #: default 4 MB message limit outright. Clipping is the fix; raising the limit
     #: would be v1's hack.
-    reference_clip_seconds: float = Field(default=20.0, gt=0, le=60.0)
+    #:
+    #: 30 seconds specifically, because that is XTTS's `gpt_cond_len`: the model reads
+    #: the first 30 seconds of the reference and ignores the rest. This was 20, which
+    #: quietly withheld a third of the conditioning the model was asking for.
+    reference_clip_seconds: float = Field(default=30.0, gt=0, le=60.0)
 
     @field_validator("max_voice_duration_seconds")
     @classmethod

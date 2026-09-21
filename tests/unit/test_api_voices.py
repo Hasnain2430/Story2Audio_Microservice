@@ -132,6 +132,10 @@ async def test_long_uploads_are_clipped_for_storage(
     A 30-second 48 kHz stereo file is 5.7 MB and exceeds gRPC's 4 MB default message
     limit outright — which is exactly how this surfaced, as a RESOURCE_EXHAUSTED from
     the transport. Clipping at upload is the fix; raising the limit would be v1's hack.
+
+    30 seconds is not an arbitrary ceiling: it is XTTS's ``gpt_cond_len``, the amount of
+    reference the model actually reads. Clipping shorter than that — this was 20 — hands
+    the model less conditioning than it asked for, and the clones get worse.
     """
     response = await client.post(
         "/v1/voices", data={"name": "Long"}, files=upload_files(make_wav(90.0))
@@ -139,9 +143,39 @@ async def test_long_uploads_are_clipped_for_storage(
 
     assert response.status_code == 201
     # Reported duration is the stored clip, not the upload.
-    assert response.json()["duration_seconds"] <= 21.0
+    assert response.json()["duration_seconds"] == pytest.approx(30.0, abs=0.1)
 
     stored = storage.objects[f"voices/{response.json()['id']}.wav"]
+    assert len(stored) < 4 * 1024 * 1024
+
+
+async def test_high_sample_rate_uploads_are_shortened_to_fit_the_wire(
+    client: AsyncClient, storage: StubStorage
+) -> None:
+    """The byte budget wins over the clip length, by shortening rather than resampling.
+
+    30 seconds of 96 kHz mono PCM16 is 5.5 MB — over gRPC's limit even after the clip.
+    The gateway has no resampler and should not grow one for this, so such an upload is
+    stored as fewer seconds instead. A shorter reference is a smaller loss than a voice
+    that fails at synthesis time, which is how the same overflow presented before.
+
+    40 seconds, not 90: at this rate a 90-second upload is 17 MB and is refused by the
+    upload cap before the budget is ever consulted, which would make this test pass for
+    the wrong reason.
+    """
+    response = await client.post(
+        "/v1/voices",
+        data={"name": "Hi-res"},
+        files=upload_files(make_wav(40.0, sample_rate=96_000)),
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["sample_rate"] == 96_000
+    # Shortened below the nominal clip, rather than rejected or resampled.
+    assert body["duration_seconds"] < 30.0
+
+    stored = storage.objects[f"voices/{body['id']}.wav"]
     assert len(stored) < 4 * 1024 * 1024
 
 

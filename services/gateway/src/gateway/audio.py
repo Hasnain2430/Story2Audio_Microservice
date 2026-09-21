@@ -51,13 +51,18 @@ class ValidatedVoice:
     source_channels: int
 
 
+#: Ceiling on the stored reference clip, in bytes. The clip is sent to the TTS engine in
+#: one gRPC message, and the default limit there is 4 MB.
+_REFERENCE_BYTE_BUDGET = 3 * 1024 * 1024
+
+
 def validate_voice_upload(
     data: bytes,
     *,
     min_duration_seconds: float,
     max_duration_seconds: float,
     max_bytes: int,
-    clip_seconds: float = 20.0,
+    clip_seconds: float = 30.0,
 ) -> ValidatedVoice:
     """Decode, check and canonicalise an uploaded voice sample.
 
@@ -66,6 +71,16 @@ def validate_voice_upload(
     engine over gRPC — where a 30-second 48 kHz stereo file is 5.7 MB and exceeds the
     default 4 MB message limit outright. Clipping at the point of storage is the fix;
     raising the transport limit would be v1's hack, and v1 needed exactly that hack.
+
+    How long to clip to is not a free choice. XTTS reads ``gpt_cond_len`` seconds of the
+    reference — 30 in the shipped config — so a clip shorter than that throws away
+    conditioning the model would have used, and a longer one stores bytes it will never
+    read. 30 seconds is the point where those meet.
+
+    Sample rate is left as uploaded, so the byte budget is enforced by *shortening* rather
+    than by resampling: a 96 kHz upload is clipped to fewer seconds instead of pulling a
+    resampler into the gateway. Rare, and a shorter reference is a smaller loss than a
+    failed upload.
 
     Raises:
         AppError: with a classified :class:`ErrorCode` for every rejection path, so the
@@ -108,7 +123,10 @@ def validate_voice_upload(
     # that no part of the pipeline ever uses.
     mono = frames.mean(axis=1) if frames.shape[1] > 1 else frames[:, 0]
 
-    clipped = mono[: int(clip_seconds * sample_rate)]
+    # Stay inside gRPC's default 4 MB message, with headroom for the WAV header and the
+    # rest of the request. PCM_16 mono is two bytes per frame.
+    budget_seconds = _REFERENCE_BYTE_BUDGET / (2 * sample_rate)
+    clipped = mono[: int(min(clip_seconds, budget_seconds) * sample_rate)]
     stored_duration = len(clipped) / sample_rate
 
     # One canonical form regardless of what was uploaded, so the engine reads WAV every
