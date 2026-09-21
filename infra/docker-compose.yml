@@ -169,6 +169,9 @@ services:
       # it lives -- v1 assumed the same thing but never wrote it down anywhere.
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       GROQ_API_KEY: ${GROQ_API_KEY:-}
+      # Reasoning models charge their thinking to the same token budget as the prose.
+      LLM_REASONING_EFFORT: ${LLM_REASONING_EFFORT:-}
+      LLM_REASONING_TOKEN_ALLOWANCE: ${LLM_REASONING_TOKEN_ALLOWANCE:-0}
     command:
       - celery
       - -A

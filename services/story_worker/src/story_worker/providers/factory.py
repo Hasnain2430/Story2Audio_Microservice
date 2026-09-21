@@ -51,6 +51,8 @@ def build_provider(settings: StoryWorkerSettings) -> LLMProvider:
                 temperature=settings.llm_temperature,
                 top_p=settings.llm_top_p,
                 timeout_seconds=settings.llm_request_timeout_seconds,
+                reasoning_effort=settings.llm_reasoning_effort,
+                reasoning_token_allowance=settings.llm_reasoning_token_allowance,
             )
 
         case LLMProviderName.FAKE:

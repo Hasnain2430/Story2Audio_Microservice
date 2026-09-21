@@ -200,13 +200,28 @@ def _generate(
         session_factory, publisher, provider, settings, job_id, prompt, stats
     )
 
+    # Checked *before* any continuation pass. Continuing an empty story asks the model to
+    # pick up from an excerpt that is not there, and it answers with a refusal -- which
+    # would then be persisted as the story. A clean failure must not become corrupt
+    # output. Reasoning models make this reachable: they can spend the entire token
+    # budget thinking and emit no prose at all.
+    if not story.strip():
+        raise AppError(
+            ErrorCode.STORY_EMPTY,
+            detail=(
+                f"provider returned no text (finish_reason={stats.finish_reason}, "
+                f"output_tokens={stats.output_tokens}, "
+                f"reasoning_tokens={stats.reasoning_tokens})"
+            ),
+        )
+
     story = _maybe_continue(
         session_factory, publisher, provider, settings, job_id, request, story, stats
     )
 
     story = story.strip()
     if not story:
-        raise AppError(ErrorCode.STORY_EMPTY, detail="provider returned no text")
+        raise AppError(ErrorCode.STORY_EMPTY, detail="story was empty after continuation")
     return story, stats
 
 
@@ -283,7 +298,7 @@ def _maybe_continue(
     would otherwise be an open-ended bill.
     """
     for attempt in range(settings.max_continuation_passes):
-        if looks_complete(story):
+        if looks_complete(story) or not story.strip():
             return story
 
         log.info(

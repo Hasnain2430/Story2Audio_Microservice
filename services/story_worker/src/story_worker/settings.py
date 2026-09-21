@@ -37,6 +37,16 @@ class StoryWorkerSettings(BaseSettings):
     llm_top_p: float = Field(default=0.95, gt=0.0, le=1.0)
     llm_request_timeout_seconds: float = Field(default=120.0, gt=0)
 
+    #: How hard a reasoning model should think, where the endpoint supports it
+    #: (`low` | `medium` | `high`). Unset means the parameter is not sent at all.
+    #: Story writing needs very little deliberation, and reasoning is charged from
+    #: the same token budget as the prose.
+    llm_reasoning_effort: str | None = None
+    #: Extra tokens a reasoning model may spend thinking, on top of the budget sized
+    #: for the story itself. Zero for a non-reasoning model. Without it, a reasoning
+    #: model can exhaust the budget before writing a single word.
+    llm_reasoning_token_allowance: int = Field(default=0, ge=0, le=32_000)
+
     ollama_base_url: str = "http://localhost:11434"
 
     groq_api_key: SecretStr = SecretStr("")

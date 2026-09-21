@@ -250,6 +250,96 @@ def test_openai_compat_requests_a_bounded_completion() -> None:
     assert captured["stream"] is True
 
 
+# --- Reasoning models -----------------------------------------------------------------------
+
+
+def test_reasoning_deltas_are_not_streamed_as_story_text() -> None:
+    """A reasoning model's scratchpad is not the story, and the reader must not see it."""
+    body = "\n".join(
+        [
+            'data: {"choices":[{"delta":{"reasoning":"Let me think about the pier..."}}]}',
+            'data: {"choices":[{"delta":{"content":"The pier was empty."}}]}',
+            "data: [DONE]",
+        ]
+    )
+
+    assert "".join(_openai_with(body).stream(PROMPT, StreamStats())) == "The pier was empty."
+
+
+def test_reasoning_token_usage_is_recorded() -> None:
+    """Without this, an empty completion is undiagnosable from the logs."""
+    body = "\n".join(
+        [
+            'data: {"choices":[{"delta":{"content":""},"finish_reason":"length"}]}',
+            'data: {"choices":[],"usage":{"completion_tokens":1000,'
+            '"completion_tokens_details":{"reasoning_tokens":998}}}',
+            "data: [DONE]",
+        ]
+    )
+    stats = StreamStats()
+
+    list(_openai_with(body).stream(PROMPT, stats))
+
+    assert stats.reasoning_tokens == 998
+    assert stats.spent_budget_on_reasoning
+
+
+def test_the_token_budget_includes_a_reasoning_allowance() -> None:
+    """Reasoning is charged from the same budget as the prose.
+
+    `gpt-oss-120b` handed a prose-sized 1000-token budget spent all 1000 of them
+    thinking and returned an empty completion. The allowance is what it may spend on
+    top of what the story itself needs.
+    """
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.update(json.loads(request.content))
+        return httpx.Response(200, text="data: [DONE]")
+
+    provider = OpenAICompatProvider(
+        name="groq",
+        base_url="http://groq.test/v1",
+        api_key="k",
+        model="openai/gpt-oss-120b",
+        temperature=0.9,
+        top_p=0.95,
+        timeout_seconds=5.0,
+        reasoning_effort="low",
+        reasoning_token_allowance=4_000,
+    )
+    provider._client = httpx.Client(base_url="http://groq.test/v1", transport=_transport(handler))
+
+    list(provider.stream(PROMPT, StreamStats()))
+
+    assert captured["max_tokens"] == PROMPT.max_output_tokens + 4_000
+    assert captured["reasoning_effort"] == "low"
+
+
+def test_reasoning_effort_is_omitted_when_unset() -> None:
+    """Not every endpoint accepts the parameter, so it is only sent when configured."""
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.update(json.loads(request.content))
+        return httpx.Response(200, text="data: [DONE]")
+
+    provider = OpenAICompatProvider(
+        name="groq",
+        base_url="http://groq.test/v1",
+        api_key="k",
+        model="m",
+        temperature=0.9,
+        top_p=0.95,
+        timeout_seconds=5.0,
+    )
+    provider._client = httpx.Client(base_url="http://groq.test/v1", transport=_transport(handler))
+
+    list(provider.stream(PROMPT, StreamStats()))
+
+    assert "reasoning_effort" not in captured
+
+
 # --- Error classification ------------------------------------------------------------------------
 
 

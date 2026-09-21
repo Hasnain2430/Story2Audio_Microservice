@@ -37,11 +37,15 @@ class OpenAICompatProvider:
         temperature: float,
         top_p: float,
         timeout_seconds: float,
+        reasoning_effort: str | None = None,
+        reasoning_token_allowance: int = 0,
     ) -> None:
         self.name = name
         self.model = model
         self._temperature = temperature
         self._top_p = top_p
+        self._reasoning_effort = reasoning_effort
+        self._reasoning_allowance = reasoning_token_allowance
         self._client = httpx.Client(
             base_url=base_url.rstrip("/"),
             timeout=httpx.Timeout(timeout_seconds, connect=10.0),
@@ -64,8 +68,18 @@ class OpenAICompatProvider:
             "stream_options": {"include_usage": True},
             "temperature": self._temperature,
             "top_p": self._top_p,
-            "max_tokens": prompt.max_output_tokens,
+            # Reasoning tokens are drawn from the same budget as the prose. A reasoning
+            # model handed a prose-sized budget can think until it is exhausted and
+            # return an empty completion -- `gpt-oss-120b` spent all 1000 tokens on
+            # reasoning and emitted nothing. The allowance is what the model may spend
+            # thinking, on top of what the story itself needs.
+            "max_tokens": prompt.max_output_tokens + self._reasoning_allowance,
         }
+        if self._reasoning_effort is not None:
+            # Supported by gpt-oss and Qwen3 on OpenAI-compatible endpoints; ignored by
+            # models that do not reason, which is why it is safe to send unconditionally
+            # once configured.
+            payload["reasoning_effort"] = self._reasoning_effort
 
         try:
             with self._client.stream("POST", "/chat/completions", json=payload) as response:
@@ -110,10 +124,15 @@ class OpenAICompatProvider:
             # The usage frame arrives after the last content frame and carries no choices.
             if usage := frame.get("usage"):
                 stats.output_tokens = usage.get("completion_tokens")
+                details = usage.get("completion_tokens_details") or {}
+                stats.reasoning_tokens = details.get("reasoning_tokens")
 
             for choice in frame.get("choices") or []:
                 if reason := choice.get("finish_reason"):
                     stats.finish_reason = str(reason)
+                # `reasoning` deltas are the model's private scratchpad. They are
+                # deliberately not yielded: they are not the story, and streaming them to
+                # the reader would show them the model's working.
                 content = (choice.get("delta") or {}).get("content")
                 if content:
                     yield str(content)

@@ -439,6 +439,47 @@ def test_an_empty_response_fails_the_stage(
     assert info.value.code is ErrorCode.STORY_EMPTY
 
 
+def test_an_empty_generation_is_never_fed_to_the_continuation_prompt(
+    sync_sessions: sessionmaker[Session],
+    publisher: SyncEventPublisher,
+    worker_settings: StoryWorkerSettings,
+    job: Job,
+) -> None:
+    """The worst bug the first real Groq run exposed.
+
+    A reasoning model spent its entire token budget thinking and returned nothing. The
+    empty result was handed to the continuation prompt, which asks the model to pick up
+    from an excerpt that is not there — so it answered with a refusal, and that refusal
+    was persisted as the story. A clean failure must not become corrupt output.
+    """
+    provider = FakeProvider([""], finish_reason="length")
+
+    with pytest.raises(AppError) as info:
+        run_story_stage(sync_sessions, publisher, provider, worker_settings, job.id)
+
+    assert info.value.code is ErrorCode.STORY_EMPTY
+    # Exactly one call: no continuation was attempted on an empty story.
+    assert len(provider.calls) == 1
+    assert reload_job(sync_sessions, job.id).story_text is None
+
+
+def test_the_empty_story_error_carries_diagnostics(
+    sync_sessions: sessionmaker[Session],
+    publisher: SyncEventPublisher,
+    worker_settings: StoryWorkerSettings,
+    job: Job,
+) -> None:
+    """`finish_reason=length` with no content is the signature of a reasoning overrun."""
+    provider = FakeProvider([""], finish_reason="length", output_tokens=1000)
+
+    with pytest.raises(AppError) as info:
+        run_story_stage(sync_sessions, publisher, provider, worker_settings, job.id)
+
+    detail = info.value.detail or ""
+    assert "finish_reason=length" in detail
+    assert "reasoning_tokens" in detail
+
+
 def test_provider_failures_propagate_classified(
     sync_sessions: sessionmaker[Session],
     publisher: SyncEventPublisher,

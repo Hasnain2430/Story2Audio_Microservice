@@ -28,6 +28,9 @@ class StreamStats:
     """
 
     output_tokens: int | None = None
+    #: Tokens the model spent on internal reasoning. These count against the same budget
+    #: as the prose, so a reasoning model can exhaust `max_tokens` and return nothing.
+    reasoning_tokens: int | None = None
     #: The model that actually served the request, which can differ from the one asked
     #: for when a gateway routes or substitutes.
     model: str | None = None
@@ -37,6 +40,11 @@ class StreamStats:
     def truncated_by_token_limit(self) -> bool:
         """Did the model stop because it hit the cap rather than because it finished?"""
         return self.finish_reason in {"length", "max_tokens"}
+
+    @property
+    def spent_budget_on_reasoning(self) -> bool:
+        """Did a reasoning model think until the budget ran out, producing no prose?"""
+        return self.truncated_by_token_limit and bool(self.reasoning_tokens)
 
 
 class LLMProvider(Protocol):
