@@ -24,6 +24,7 @@ def build_backend(settings: TtsEngineSettings) -> SynthesisBackend:
                 model_name=settings.tts_model_name,
                 device=settings.tts_device,
                 chunk_bytes=settings.audio_chunk_bytes,
+                use_half=settings.tts_use_half,
             )
 
         case Backend.STUB:

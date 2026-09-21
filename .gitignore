@@ -46,3 +46,7 @@ Thumbs.db
 .idea/
 .vscode/*
 !.vscode/extensions.json
+
+# Isolated venv for running tts-engine natively on the GPU (see docs/03 Phase 4).
+# Kept out of the uv workspace so CUDA torch wheels never enter the shared lockfile.
+.venv-tts-gpu/

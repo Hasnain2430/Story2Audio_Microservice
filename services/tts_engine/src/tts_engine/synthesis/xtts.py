@@ -21,6 +21,7 @@ from __future__ import annotations
 import io
 import tempfile
 from collections.abc import Iterator
+from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -55,9 +56,11 @@ class XttsBackend:
         model_name: str,
         device: str,
         chunk_bytes: int = 32 * 1024,
+        use_half: bool = False,
     ) -> None:
         self.model = model_name
         self.device = device
+        self._use_half = use_half and device.startswith("cuda")
         self.audio_format = AudioFormat(
             sample_rate=_SAMPLE_RATE, channels=1, sample_format=SampleFormat.PCM_S16LE
         )
@@ -87,13 +90,41 @@ class XttsBackend:
         self._torch = torch
         log.info("xtts_loading", model=self.model, device=self.device)
 
-        tts = TTS(model_name=self.model, progress_bar=False)
-        tts.to(self.device)
-        # Reach through to the underlying model: the high-level `TTS` wrapper exposes
-        # only file-in/file-out, which is what forced v1 to recompute conditioning on
-        # every call and to write every segment through a temporary file.
-        self._model = tts.synthesizer.tts_model
-        log.info("xtts_loaded", model=self.model, device=self.device)
+        try:
+            # Loaded to CPU first. Reaching through to the underlying model is what lets
+            # conditioning be computed once and PCM be streamed; the high-level `TTS`
+            # wrapper is file-in/file-out, which is what forced v1 to recompute
+            # conditioning on every call and write every segment through a temp file.
+            tts = TTS(model_name=self.model, progress_bar=False)
+            model = tts.synthesizer.tts_model
+
+            if self._use_half:
+                # Cast *before* moving to the device. Halving after `.to(cuda)` still
+                # puts full fp32 weights in VRAM first, so peak usage is unchanged and a
+                # 4 GB card runs out part-way through the load -- which is exactly what
+                # happened before this order was fixed.
+                model = model.half()
+
+            self._model = model.to(self.device)
+        except torch.cuda.OutOfMemoryError as exc:
+            free, total = torch.cuda.mem_get_info()
+            raise SynthesisError(
+                f"not enough VRAM to load {self.model}: "
+                f"{free / 1e9:.1f} GB free of {total / 1e9:.1f} GB. "
+                "Set TTS_USE_HALF=true, free GPU memory, or use TTS_DEVICE=cpu."
+            ) from exc
+
+        log.info(
+            "xtts_loaded",
+            model=self.model,
+            device=self.device,
+            precision="fp16" if self._use_half else "fp32",
+            vram_allocated_gb=(
+                round(torch.cuda.memory_allocated() / 1e9, 2)
+                if self.device.startswith("cuda")
+                else None
+            ),
+        )
 
     def embed(self, voice_id: str, reference_wav: bytes) -> SpeakerEmbedding:
         """Compute the conditioning latents for one voice.
@@ -107,9 +138,10 @@ class XttsBackend:
 
         path = self._materialise(reference_wav)
         try:
-            gpt_cond_latent, speaker_embedding = self._model.get_conditioning_latents(
-                audio_path=[path]
-            )
+            with self._inference_context():
+                gpt_cond_latent, speaker_embedding = self._model.get_conditioning_latents(
+                    audio_path=[path]
+                )
         except Exception as exc:
             raise SynthesisError(f"could not embed voice {voice_id}: {exc}") from exc
         finally:
@@ -139,24 +171,43 @@ class XttsBackend:
         gpt_cond_latent, speaker_embedding = embedding.payload
 
         try:
-            stream = self._model.inference_stream(
-                text,
-                language,
-                gpt_cond_latent,
-                speaker_embedding,
-                speed=speed,
-                enable_text_splitting=True,
-            )
-            for tensor in stream:
-                yield from self._to_pcm_chunks(tensor)
+            with self._inference_context():
+                stream = self._model.inference_stream(
+                    text,
+                    language,
+                    gpt_cond_latent,
+                    speaker_embedding,
+                    speed=speed,
+                    enable_text_splitting=True,
+                )
+                for tensor in stream:
+                    yield from self._to_pcm_chunks(tensor)
         except Exception as exc:
             raise SynthesisError(f"synthesis failed: {exc}") from exc
+
+    def _inference_context(self) -> AbstractContextManager[Any]:
+        """Run inference under autocast when the weights are half precision.
+
+        `model.half()` alone is not enough: Coqui decodes reference audio to float32 and
+        then feeds it to half-precision weights, which torch refuses with
+        "Input type (torch.cuda.FloatTensor) and weight type (torch.cuda.HalfTensor)
+        should be the same". Autocast casts the eligible operations instead of requiring
+        every input to be converted by hand.
+        """
+        if not self._use_half or self._torch is None:
+            return nullcontext()
+        autocast: AbstractContextManager[Any] = self._torch.autocast(
+            device_type="cuda", dtype=self._torch.float16
+        )
+        return autocast
 
     def _to_pcm_chunks(self, tensor: Any) -> Iterator[bytes]:
         """Convert one model output tensor to bounded little-endian PCM16 chunks."""
         import numpy as np
 
-        samples: np.ndarray[Any, Any] = tensor.detach().to("cpu").numpy().reshape(-1)
+        # `.float()` before `.numpy()`: a half-precision tensor has no direct numpy
+        # dtype on every platform, and the conversion below assumes float32 range.
+        samples: np.ndarray[Any, Any] = tensor.detach().float().to("cpu").numpy().reshape(-1)
         # Clip before casting: XTTS occasionally overshoots and a wraparound is an
         # audible crack rather than a clipped peak.
         clipped = np.clip(samples, -1.0, 1.0)

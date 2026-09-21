@@ -1,9 +1,32 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="color-scheme" content="light dark" />
+    <meta name="color-scheme" content="dark light" />
+    <meta
+      name="description"
+      content="Turn a one-line premise into a narrated story, read in a cloned voice."
+    />
+    <meta name="theme-color" content="#08090b" />
+
+    <!--
+      Fraunces carries the identity and the prose; IBM Plex Sans and Mono handle the UI
+      and the machinery. Preconnected so the first paint is not waiting on a DNS lookup,
+      and `display=swap` so text is readable before the faces arrive.
+    -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT,WONK@0,9..144,300..700,0..100,0..1;1,9..144,300..700,0..100,0..1&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+    />
+
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='14' fill='none' stroke='%23333a43' stroke-width='2.5'/><circle cx='16' cy='16' r='5' fill='%23f08a3c'/></svg>"
+    />
+
     <title>Story2Audio</title>
   </head>
   <body>

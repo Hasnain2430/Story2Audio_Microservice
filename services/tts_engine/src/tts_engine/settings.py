@@ -37,6 +37,17 @@ class TtsEngineSettings(BaseSettings):
     tts_backend: Backend = Backend.STUB
     tts_model_name: str = "tts_models/multilingual/multi-dataset/xtts_v2"
     tts_device: str = "cuda"
+    #: Load the model in half precision. Roughly halves resident VRAM -- measured at
+    #: 0.99 GB against 1.91 GB for XTTS v2.
+    #:
+    #: EXPERIMENTAL, and off by default for a reason: XTTS's autoregressive stage is
+    #: not numerically stable in fp16. It loads and embeds correctly, then fails
+    #: during generation with `CUDA error: device-side assert triggered` -- NaNs
+    #: producing an out-of-range token index. Enable only if you have measured it
+    #: working on your own hardware and model version.
+    #:
+    #: Ignored on CPU, where fp16 is slower rather than smaller.
+    tts_use_half: bool = False
 
     #: One GPU, one inference. Requests beyond this are refused with RESOURCE_EXHAUSTED
     #: rather than queued. v1 had a module-global mutex that silently serialised every
