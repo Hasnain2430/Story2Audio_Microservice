@@ -1,0 +1,113 @@
+syntax = "proto3";
+
+// Internal contract between `tts-worker` and `tts-engine`.
+//
+// This is where gRPC earns its place in v2. The worker does CPU work -- segmentation,
+// stitching, encoding, upload -- and must not occupy a GPU while doing it; the engine
+// holds the model in VRAM and does nothing else. Separating them means one GPU serves
+// many workers and can be a scale-to-zero container while the workers stay warm.
+//
+// Not a public API. v1 exposed gRPC to its clients and shipped rendered audio back as a
+// protobuf `bytes` field, which is why both ends had to raise their message limit to
+// 100 MB. Here audio is streamed in bounded chunks and the default limits are untouched.
+
+package story2audio.tts.v1;
+
+service TtsEngine {
+  // Render one segment of text. Audio arrives as an AudioInfo header followed by PCM
+  // chunks, so the caller knows the format before the first sample.
+  rpc Synthesize(SynthesizeRequest) returns (stream SynthesizeResponse);
+
+  // Compute and cache a speaker embedding ahead of time.
+  rpc EmbedSpeaker(EmbedSpeakerRequest) returns (EmbedSpeakerResponse);
+
+  // Backend, device, capacity and cache state. Used by readiness checks and by the
+  // worker to decide whether a language is supported before queueing work.
+  rpc GetInfo(GetInfoRequest) returns (GetInfoResponse);
+}
+
+// Identifies whose voice to clone.
+//
+// The engine caches embeddings by `voice_id` and holds no object-storage credentials:
+// it is the one process running a large model over untrusted text, so its blast radius
+// stays as small as possible. The caller normally sends the id alone; on a cache miss
+// the engine answers FAILED_PRECONDITION and the caller retries with the audio attached.
+message SpeakerRef {
+  string voice_id = 1;
+
+  // Reference sample, WAV. Optional: send only to seed a cold cache.
+  bytes reference_audio = 2;
+}
+
+message SynthesizeRequest {
+  string text = 1;
+  SpeakerRef speaker = 2;
+
+  // BCP-47-ish short code, e.g. "en". Validated against GetInfoResponse.languages.
+  string language = 3;
+
+  // Playback rate multiplier. The caller is expected to have bounded this already.
+  float speed = 4;
+
+  // Job id or segment id. Logged by the engine so one segment can be traced across
+  // both services.
+  string request_id = 5;
+}
+
+enum SampleFormat {
+  SAMPLE_FORMAT_UNSPECIFIED = 0;
+  SAMPLE_FORMAT_PCM_S16LE = 1;
+  SAMPLE_FORMAT_PCM_F32LE = 2;
+}
+
+// Sent once, before any audio.
+message AudioInfo {
+  uint32 sample_rate = 1;
+  uint32 channels = 2;
+  SampleFormat format = 3;
+}
+
+message AudioChunk {
+  bytes pcm = 1;
+
+  // Starts at 1. gRPC already guarantees ordering within a stream, so this is not for
+  // reassembly -- it is so a truncated stream is detectable instead of silently
+  // producing short audio.
+  uint32 sequence = 2;
+}
+
+message SynthesizeResponse {
+  oneof payload {
+    AudioInfo info = 1;
+    AudioChunk chunk = 2;
+  }
+}
+
+message EmbedSpeakerRequest {
+  string voice_id = 1;
+  bytes reference_audio = 2;
+}
+
+message EmbedSpeakerResponse {
+  string voice_id = 1;
+
+  // False when the embedding was already cached and the audio was not needed.
+  bool computed = 2;
+  double reference_duration_seconds = 3;
+}
+
+message GetInfoRequest {}
+
+message GetInfoResponse {
+  string backend = 1;
+  string model = 2;
+  string device = 3;
+
+  // False until the model is resident in memory. Readiness, not liveness.
+  bool ready = 4;
+
+  uint32 max_concurrent = 5;
+  uint32 in_flight = 6;
+  repeated string languages = 7;
+  uint32 cached_speakers = 8;
+}

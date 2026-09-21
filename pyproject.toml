@@ -8,12 +8,21 @@ dependencies = []
 [tool.uv]
 package = false
 
-# `services/tts_engine` is deliberately NOT a workspace member. It depends on torch and
-# Coqui TTS, whose pins are strict enough that a joint resolution with the light services
-# is fragile. It carries its own pyproject.toml and its own lockfile, and talks to the
-# rest of the system only over gRPC — so it shares no Python code and needs no shared lock.
+# `services/tts_engine` is a member, but its heavy dependencies are not: torch and
+# coqui-tts sit behind its `gpu` extra, so the shared lock resolves without them and CI
+# stays fast. Phase 0 kept the engine out of the workspace entirely, on the assumption
+# that those pins would poison a joint resolution; once they moved behind an extra that
+# reasoning stopped applying, and membership is what lets the engine be tested from the
+# same suite as everything else. It still shares no Python with the other services —
+# only the gRPC contract in `proto/tts/v1`.
 [tool.uv.workspace]
-members = ["packages/shared", "services/gateway", "services/story_worker", "services/tts_worker"]
+members = [
+    "packages/shared",
+    "services/gateway",
+    "services/story_worker",
+    "services/tts_worker",
+    "services/tts_engine",
+]
 
 [tool.uv.sources]
 story2audio-shared = { workspace = true }
@@ -32,6 +41,10 @@ dev = [
     "httpx>=0.28",
     "httpx-ws>=0.7",
     "pytest-timeout>=2.3",
+    "grpcio-tools>=1.68",
+    "grpcio>=1.68",
+    "grpcio-health-checking>=1.68",
+    "types-grpcio>=1.0",
 ]
 
 [tool.ruff]
@@ -87,8 +100,29 @@ warn_unreachable = true
 exclude = ["^legacy/", "_pb2\\.py$", "_pb2_grpc\\.py$"]
 
 [[tool.mypy.overrides]]
-module = ["pydub.*", "celery.*", "soundfile.*", "TTS.*"]
+# torch and coqui-tts are installed only in the GPU image, behind an optional extra.
+module = ["pydub.*", "celery.*", "soundfile.*", "TTS.*", "torch.*", "grpc_health.*"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# protoc emits untyped stubs. They are generated, not written, so errors inside them
+# are not ours to fix -- the contract they encode is checked at the call sites.
+module = ["tts_engine.pb.*", "tts_worker.pb.*"]
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+# Modules that consume those untyped stubs: the generated servicer base class and
+# registration helpers carry no annotations. Scoped so the relaxation cannot spread.
+module = [
+    "tts_engine.server",
+    "tts_worker.engine_client",
+    "tests.unit.test_tts_engine",
+]
+disallow_untyped_calls = false
+disallow_subclassing_any = false
+# The stub backends in the engine tests raise before their `yield`, which mypy reads
+# as unreachable -- the yield is what keeps them generators.
+warn_unreachable = false
 
 [[tool.mypy.overrides]]
 # Celery's `@app.task` decorator is untyped, which under --strict makes every task

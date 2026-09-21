@@ -1,6 +1,8 @@
-# Standalone: NOT part of the root uv workspace. See the comment in the root pyproject.toml.
-# Resolved and locked on its own because torch + Coqui TTS pins do not co-resolve cleanly
-# with the light services. It shares no Python code with them -- only the gRPC contract.
+# A workspace member whose heavy dependencies are not: torch and coqui-tts live behind
+# the `gpu` extra, so the shared lock resolves without them and only the GPU image
+# installs them. This service shares no Python with the others -- only the gRPC contract
+# in proto/tts/v1 -- which is why it keeps its own logging helper rather than importing
+# packages/shared.
 [project]
 name = "story2audio-tts-engine"
 version = "2.0.0"
@@ -29,6 +31,3 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/tts_engine"]
-
-[dependency-groups]
-dev = ["ruff>=0.14", "mypy>=1.18", "pytest>=8.3", "grpcio-tools>=1.68"]

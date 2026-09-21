@@ -28,6 +28,11 @@ jobs:
       - name: Sync workspace
         run: uv sync --all-packages --all-groups
 
+      - name: Generate gRPC stubs
+        # The .proto is committed, the stubs are not, so they are built here rather
+        # than risking a stale copy in the repository.
+        run: uv run python infra/scripts/gen_proto.py
+
       - name: Ruff (lint)
         run: uv run ruff check --output-format=github .
 
