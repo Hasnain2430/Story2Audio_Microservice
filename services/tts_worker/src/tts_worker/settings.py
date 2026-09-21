@@ -24,7 +24,18 @@ class TtsWorkerSettings(BaseSettings):
     tts_capacity_backoff_seconds: float = Field(default=2.0, gt=0)
 
     #: Audio assembly. v1's values, kept.
+    #: Pause at an ordinary boundary between segments of the same speaker — the end of a
+    #: paragraph, or a sentence break the story wrote.
     segment_pause_ms: int = Field(default=300, ge=0, le=5_000)
+    #: Pause where a segment boundary exists only because the text was too long for one
+    #: synthesis request. A reader does not pause there, so neither should the audio. It
+    #: is not zero: two independently rendered clips need a seam to butt against, and a
+    #: hard cut between them is audible.
+    continuation_pause_ms: int = Field(default=80, ge=0, le=5_000)
+    #: Pause when the voice changes. A beat longer than a paragraph break, because the
+    #: listener has to register that someone else is talking; with the same 300 ms used
+    #: everywhere, a reply lands on top of the line it answers.
+    speaker_change_pause_ms: int = Field(default=420, ge=0, le=5_000)
     lead_silence_ms: int = Field(default=300, ge=0, le=5_000)
     fade_ms: int = Field(default=20, ge=0, le=500)
     silence_threshold_dbfs: float = Field(default=-40.0, le=0)

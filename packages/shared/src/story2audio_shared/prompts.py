@@ -15,6 +15,14 @@ is a delimited ``user`` message, which is the baseline defence against prompt in
 
 *Language.* v1 generated in English and then round-tripped each segment through MarianMT.
 The model is asked to write in the target language directly instead.
+
+*Dialogue that is actually dialogue.* v1 asked for "ONE character dialogue ... from a
+female character", and that clause was carried over here verbatim as "exactly one spoken
+line". It did what it said: a 400-word story in dialogue mode came back with a single
+quoted sentence out of twelve segments, so the second voice was heard once and the mode
+was effectively narration with a cameo. It now asks for two named characters and at least
+six alternating lines, with speakers named in plain attribution tags — plain because the
+worker reads those tags to decide which voice speaks which line.
 """
 
 from __future__ import annotations
@@ -85,10 +93,18 @@ _MODE_RULES: Final[dict[VoiceMode, str]] = {
         "double quotation marks anywhere in the story."
     ),
     VoiceMode.NARRATION_WITH_DIALOGUE: (
-        "- Include exactly one spoken line from a female character, wrapped in double "
-        'quotation marks, like "this". Every other sentence must be narration.\n'
-        "- The spoken line is in first person; the narration stays in third person.\n"
-        "- Do not use double quotation marks for anything other than that spoken line."
+        "- Write a story with exactly TWO speaking characters. Give each one a short, "
+        "plain first name, and use those names consistently.\n"
+        "- Include at least SIX spoken lines, alternating between the two characters, "
+        "forming real back-and-forth exchanges rather than isolated remarks.\n"
+        '- Wrap every spoken line in double quotation marks, like "this". Put each '
+        "spoken line in its own paragraph.\n"
+        "- Name the speaker in the narration next to the line, in the plain forms "
+        '"Mara said" or "said Mara". Do not use adverb-laden tags, and do not leave a '
+        "line unattributed unless the previous line makes the speaker obvious.\n"
+        "- Spoken lines are in first person; the narration stays in third person.\n"
+        "- Do not use double quotation marks for anything other than spoken lines. Never "
+        "use them for emphasis, titles or quoted objects."
     ),
 }
 

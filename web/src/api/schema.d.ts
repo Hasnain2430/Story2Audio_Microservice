@@ -212,6 +212,8 @@ export interface components {
             mode: components["schemas"]["VoiceMode"];
             /** Prompt */
             prompt: string;
+            /** Second Dialogue Voice Id */
+            second_dialogue_voice_id?: string | null;
             /**
              * Speed
              * @default 1
@@ -301,6 +303,8 @@ export interface components {
             mode: components["schemas"]["VoiceMode"];
             /** Prompt */
             prompt: string;
+            /** Second Dialogue Voice Id */
+            second_dialogue_voice_id?: string | null;
             /** Segment Count */
             segment_count?: number | null;
             /** Segments */
@@ -414,6 +418,8 @@ export interface components {
             /** Index */
             index: number;
             kind: components["schemas"]["SegmentKind"];
+            /** Speaker */
+            speaker?: string | null;
             /** Start Char */
             start_char: number;
             /** Start Seconds */

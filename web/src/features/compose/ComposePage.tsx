@@ -45,20 +45,29 @@ export function ComposePage() {
   const [prompt, setPrompt] = useState('')
   const [length, setLength] = useState<StoryLength>('short')
   const [mode, setMode] = useState<VoiceMode>('narration')
+
   const [emotion, setEmotion] = useState<Emotion>('neutral')
   const [language, setLanguage] = useState<Language>('en')
   const [speed, setSpeed] = useState(1)
   const [voiceId, setVoiceId] = useState<string | null>(null)
   const [dialogueVoiceId, setDialogueVoiceId] = useState<string | null>(null)
+  const [secondVoiceId, setSecondVoiceId] = useState<string | null>(null)
 
   const available = voices.data ?? []
   const narrator = voiceId ?? available[0]?.id ?? null
   const needsDialogueVoice = mode === 'narration_with_dialogue'
   const dialogue =
     dialogueVoiceId ?? available.find((voice) => voice.id !== narrator)?.id ?? null
+  // The story is written with two named characters, so a third voice is what stops the
+  // exchange being one person answering themselves. Optional: without it both parts are
+  // read by the first character's voice, which is what this mode used to do for every
+  // line in the story.
+  const second =
+    secondVoiceId ?? available.find((v) => v.id !== narrator && v.id !== dialogue)?.id ?? null
 
   const error = createJob.error instanceof ApiError ? createJob.error : null
-  const ready = prompt.trim().length > 0 && narrator !== null && (!needsDialogueVoice || dialogue)
+  const ready =
+    prompt.trim().length > 0 && narrator !== null && (!needsDialogueVoice || dialogue !== null)
 
   async function onSubmit(event: SyntheticEvent) {
     event.preventDefault()
@@ -75,6 +84,7 @@ export function ComposePage() {
       // The API rejects a dialogue voice in narration mode outright, so it is only sent
       // when the mode actually calls for one.
       dialogue_voice_id: needsDialogueVoice ? dialogue : null,
+      second_dialogue_voice_id: needsDialogueVoice && second !== dialogue ? second : null,
     })
 
     void navigate(`/jobs/${job.id}`)
@@ -144,14 +154,25 @@ export function ComposePage() {
             />
 
             {needsDialogueVoice && (
-              <VoicePicker
-                label="Spoken lines"
-                hint="Used for dialogue inside quotation marks"
-                voices={available.filter((voice) => voice.id !== narrator)}
-                loading={voices.isLoading}
-                selectedId={dialogue}
-                onSelect={setDialogueVoiceId}
-              />
+              <>
+                <VoicePicker
+                  label="First character"
+                  hint="Whoever speaks first in the story"
+                  voices={available.filter((voice) => voice.id !== narrator)}
+                  loading={voices.isLoading}
+                  selectedId={dialogue}
+                  onSelect={setDialogueVoiceId}
+                />
+
+                <VoicePicker
+                  label="Second character"
+                  hint="Who they are talking to"
+                  voices={available.filter((v) => v.id !== narrator && v.id !== dialogue)}
+                  loading={voices.isLoading}
+                  selectedId={second}
+                  onSelect={setSecondVoiceId}
+                />
+              </>
             )}
           </div>
         </div>

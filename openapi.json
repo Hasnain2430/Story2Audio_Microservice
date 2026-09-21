@@ -104,6 +104,18 @@
             "title": "Prompt",
             "type": "string"
           },
+          "second_dialogue_voice_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Second Dialogue Voice Id"
+          },
           "speed": {
             "default": 1.0,
             "maximum": 1.5,
@@ -290,6 +302,18 @@
           "prompt": {
             "title": "Prompt",
             "type": "string"
+          },
+          "second_dialogue_voice_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Second Dialogue Voice Id"
           },
           "segment_count": {
             "anyOf": [
@@ -545,6 +569,17 @@
           },
           "kind": {
             "$ref": "#/components/schemas/SegmentKind"
+          },
+          "speaker": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Speaker"
           },
           "start_char": {
             "title": "Start Char",

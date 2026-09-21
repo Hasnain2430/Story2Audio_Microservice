@@ -55,7 +55,15 @@ def main() -> int:
 
     narrator = next((v for v in voices if args.voice.lower() in v["name"].lower()), voices[0])
     other = next((v for v in voices if v["id"] != narrator["id"]), narrator)
-    say(f"voice  {narrator['name']} ({narrator['duration_seconds']:.0f}s reference)")
+    third = next(
+        (v for v in voices if v["id"] not in {narrator["id"], other["id"]}),
+        None,
+    )
+    say(f"narrator   {narrator['name']} ({narrator['duration_seconds']:.0f}s reference)")
+    if args.mode == "narration_with_dialogue":
+        say(f"character  {other['name']}")
+        if third:
+            say(f"character  {third['name']}")
 
     payload = json.dumps(
         {
@@ -67,6 +75,9 @@ def main() -> int:
             "speed": 1.0,
             "voice_id": narrator["id"],
             "dialogue_voice_id": other["id"] if args.mode == "narration_with_dialogue" else None,
+            "second_dialogue_voice_id": (
+                third["id"] if args.mode == "narration_with_dialogue" and third else None
+            ),
         }
     ).encode()
 
@@ -110,6 +121,7 @@ def main() -> int:
     for segment in segments[:5]:
         say(
             f"  [{segment['index']:>2}] {segment['kind']:<9} "
+            f"{(segment.get('speaker') or '-'):<8} "
             f"{segment['start_seconds']:7.2f}-{segment['end_seconds']:7.2f}s  "
             f"chars {segment['start_char']}-{segment['end_char']}  "
             f"{segment['text'][:48]!r}"

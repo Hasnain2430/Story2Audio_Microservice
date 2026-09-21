@@ -70,7 +70,7 @@ async def create_job(
             return existing, False
 
     await _assert_prompt_within_deployment_limit(request, limits)
-    voice, dialogue_voice = await _resolve_voices(session, owner_id, request)
+    voice, dialogue_voice, second_voice = await _resolve_voices(session, owner_id, request)
     await _assert_concurrency_available(session, owner_id, limits)
     await _assert_hourly_quota_available(rate_limiter, owner_id, limits)
 
@@ -93,6 +93,7 @@ async def create_job(
         speed=request.speed,
         voice_id=voice.id,
         dialogue_voice_id=dialogue_voice.id if dialogue_voice is not None else None,
+        second_dialogue_voice_id=second_voice.id if second_voice is not None else None,
         idempotency_key=idempotency_key,
         queued_at=datetime.now(UTC),
     )
@@ -235,6 +236,7 @@ def to_response(job: Job, storage: ObjectStorage, *, ttl_seconds: int) -> JobRes
         speed=job.speed,
         voice_id=job.voice_id,
         dialogue_voice_id=job.dialogue_voice_id,
+        second_dialogue_voice_id=job.second_dialogue_voice_id,
         story_text=job.story_text,
         audio=audio,
         segment_count=job.segment_count,
@@ -302,7 +304,7 @@ async def _assert_prompt_within_deployment_limit(
 
 async def _resolve_voices(
     session: AsyncSession, owner_id: UUID, request: CreateJobRequest
-) -> tuple[Voice, Voice | None]:
+) -> tuple[Voice, Voice | None, Voice | None]:
     """Resolve voice ids to rows the caller is allowed to use.
 
     This is the replacement for v1's ``speaker_audio`` string: the client names a voice,
@@ -311,12 +313,16 @@ async def _resolve_voices(
     """
     narrator = await _load_voice(session, owner_id, request.voice_id)
     if request.mode is not VoiceMode.NARRATION_WITH_DIALOGUE:
-        return narrator, None
+        return narrator, None, None
 
     if request.dialogue_voice_id is None:  # pragma: no cover - schema already rejects this
         raise AppError(ErrorCode.DIALOGUE_VOICE_REQUIRED)
     dialogue = await _load_voice(session, owner_id, request.dialogue_voice_id)
-    return narrator, dialogue
+
+    second = None
+    if request.second_dialogue_voice_id is not None:
+        second = await _load_voice(session, owner_id, request.second_dialogue_voice_id)
+    return narrator, dialogue, second
 
 
 async def _load_voice(session: AsyncSession, owner_id: UUID, voice_id: UUID) -> Voice:

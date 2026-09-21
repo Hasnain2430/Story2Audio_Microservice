@@ -70,19 +70,29 @@ class CreateJobRequest(ApiModel):
     #: Narrator voice. An opaque id resolved against the voice catalogue server-side; v1
     #: accepted a filesystem path from the client and passed it straight to the TTS engine.
     voice_id: UUID
-    #: Voice for quoted dialogue. Required in dialogue mode, rejected otherwise. v1
-    #: hardcoded ``voices/female.wav`` and called it multi-speaker support.
+    #: Voice for the first speaking character. Required in dialogue mode, rejected
+    #: otherwise. v1 hardcoded ``voices/female.wav`` and called it multi-speaker support.
     dialogue_voice_id: UUID | None = None
+    #: Voice for the second speaking character. Optional: without it both characters are
+    #: read by ``dialogue_voice_id``, which is what the mode used to do for every line in
+    #: the story. The prompt asks for exactly two named characters, so this is the voice
+    #: that makes an exchange sound like two people rather than one person answering
+    #: themselves.
+    second_dialogue_voice_id: UUID | None = None
 
     @model_validator(mode="after")
-    def _dialogue_voice_matches_mode(self) -> Self:
+    def _dialogue_voices_match_mode(self) -> Self:
         if self.mode is VoiceMode.NARRATION_WITH_DIALOGUE:
             if self.dialogue_voice_id is None:
                 raise ValueError(
                     "dialogue_voice_id is required when mode is narration_with_dialogue"
                 )
-        elif self.dialogue_voice_id is not None:
-            raise ValueError("dialogue_voice_id is only valid when mode is narration_with_dialogue")
+            if self.second_dialogue_voice_id == self.dialogue_voice_id:
+                # Permitted by the data model, but always a mistake by the caller: it asks
+                # for two characters and then gives them one voice.
+                raise ValueError("second_dialogue_voice_id must differ from dialogue_voice_id")
+        elif self.dialogue_voice_id is not None or self.second_dialogue_voice_id is not None:
+            raise ValueError("dialogue voices are only valid when mode is narration_with_dialogue")
         return self
 
 
@@ -170,6 +180,9 @@ class SpokenSegment(ApiModel):
     kind: SegmentKind
     #: The cleaned text, as actually spoken.
     text: str
+    #: Which character speaks this, where the story attributed it. ``None`` for narration,
+    #: and for a line whose speaker could not be read from the prose.
+    speaker: str | None = None
     start_char: int
     end_char: int
     start_seconds: float
@@ -189,6 +202,7 @@ class JobResponse(ApiModel):
     speed: float
     voice_id: UUID
     dialogue_voice_id: UUID | None = None
+    second_dialogue_voice_id: UUID | None = None
 
     story_text: str | None = None
     audio: list[AudioAsset] = Field(default_factory=list)

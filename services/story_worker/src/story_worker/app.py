@@ -74,9 +74,18 @@ def build_celery_app() -> Celery:
         task_soft_time_limit=worker_config.job_lease_ttl_seconds,
         broker_connection_retry_on_startup=True,
         worker_hijack_root_logger=False,
+        # Celery otherwise replaces sys.stdout/sys.stderr with a proxy that writes into
+        # its own logger. `configure_logging` then installs a stdlib handler pointed at
+        # that proxy, the proxy's recursion guard drops the write, and every structured
+        # log line from this worker disappears -- silently, with logging that works
+        # perfectly when the same code is run outside Celery. Keep the real streams.
+        worker_redirect_stdouts=False,
     )
     return app
 
+
+_core = core_settings()
+configure_logging(level=_core.log_level, json_output=_core.log_format.value == "json")
 
 celery_app = build_celery_app()
 

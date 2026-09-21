@@ -78,11 +78,36 @@ def test_narration_mode_forbids_dialogue() -> None:
     assert "Do NOT include any spoken dialogue" in system
 
 
-def test_dialogue_mode_requires_exactly_one_female_line() -> None:
+def test_dialogue_mode_asks_for_a_real_exchange() -> None:
+    """v1 asked for "ONE character dialogue", and v2 carried the clause over verbatim.
+
+    It did exactly what it said: a 400-word story came back with one quoted sentence out
+    of twelve segments, so the second voice was heard once and the mode was narration
+    with a cameo. Two characters and a real back-and-forth is the whole point of it.
+    """
     system = _prompt(mode=VoiceMode.NARRATION_WITH_DIALOGUE).system
-    assert "exactly one spoken line from a female character" in system
+
+    assert "exactly TWO speaking characters" in system
+    assert "SIX spoken lines" in system
+    assert "alternating" in system
+    assert "exactly one spoken line" not in system
     assert "first person" in system
     assert "third person" in system
+
+
+def test_dialogue_mode_asks_for_attribution_the_worker_can_parse() -> None:
+    """The prompt and the segmenter are one contract, and it is easy to break silently.
+
+    `_attribute` reads plain "Mara said" / "said Mara" tags to decide which voice speaks
+    which line. If the prompt stops asking for that form — or starts encouraging adverbial
+    tags — attribution quietly degrades to the fallback voice and a two-hander is read by
+    one person again, with nothing failing anywhere.
+    """
+    system = _prompt(mode=VoiceMode.NARRATION_WITH_DIALOGUE).system
+
+    assert "Mara said" in system
+    assert "said Mara" in system
+    assert "own paragraph" in system
 
 
 def test_completion_requirement_is_present_in_every_mode() -> None:

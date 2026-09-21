@@ -6,6 +6,7 @@ against a stub engine. `tasks.py` is the thin Celery wrapper.
 
 from __future__ import annotations
 
+import itertools
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -32,7 +33,7 @@ from story2audio_shared.worker import (
 from tts_worker import audio as audio_ops
 from tts_worker.audio import PcmAudio
 from tts_worker.engine_client import EngineClient
-from tts_worker.segmentation import Segment, split_story
+from tts_worker.segmentation import Segment, max_segment_chars, split_story
 from tts_worker.settings import TtsWorkerSettings
 
 log = get_logger(__name__)
@@ -59,6 +60,8 @@ class _Request:
     narrator_key: str
     dialogue_voice_id: UUID | None
     dialogue_key: str | None
+    second_dialogue_voice_id: UUID | None
+    second_dialogue_key: str | None
 
 
 def run_tts_stage(
@@ -97,7 +100,12 @@ def run_tts_stage(
 
         request = _snapshot_request(session, job)
 
-    segments = split_story(request.story, max_segment_chars=settings.max_segment_chars)
+    # Capped by what XTTS accepts for this language, not only by what is configured:
+    # over the limit it truncates the audio and merely logs about it.
+    segments = split_story(
+        request.story,
+        max_segment_chars=max_segment_chars(request.language, settings.max_segment_chars),
+    )
     if not segments:
         raise AppError(ErrorCode.AUDIO_ASSEMBLY_FAILED, detail="story produced no segments")
 
@@ -107,7 +115,7 @@ def run_tts_stage(
     rendered = _synthesize_segments(
         session_factory, publisher, engine, storage, settings, job_id, request, segments
     )
-    mixed, timeline = _assemble(segments, rendered, settings)
+    mixed, timeline = _assemble(segments, rendered, settings, request.story)
     assets = _upload(storage, job_id, mixed, settings)
 
     with session_scope(session_factory) as session:
@@ -140,6 +148,15 @@ def _snapshot_request(session: Session, job: Job) -> _Request:
         raise AppError(ErrorCode.VOICE_NOT_FOUND, detail=f"voice {job.voice_id} is gone")
 
     dialogue: Voice | None = None
+    second = None
+    if job.second_dialogue_voice_id is not None:
+        second = session.scalar(select(Voice).where(Voice.id == job.second_dialogue_voice_id))
+        if second is None:
+            raise AppError(
+                ErrorCode.VOICE_NOT_FOUND,
+                detail=f"voice {job.second_dialogue_voice_id} is gone",
+            )
+
     if job.dialogue_voice_id is not None:
         dialogue = session.scalar(select(Voice).where(Voice.id == job.dialogue_voice_id))
         if dialogue is None:
@@ -156,6 +173,8 @@ def _snapshot_request(session: Session, job: Job) -> _Request:
         narrator_key=narrator.storage_key,
         dialogue_voice_id=dialogue.id if dialogue else None,
         dialogue_key=dialogue.storage_key if dialogue else None,
+        second_dialogue_voice_id=second.id if second else None,
+        second_dialogue_key=second.storage_key if second else None,
     )
 
 
@@ -215,6 +234,12 @@ def _synthesize_segments(
     # Reference audio is fetched at most once per voice per job, and only if the engine
     # reports a cache miss.
     loaders = _reference_loaders(storage, request)
+    cast = _build_cast(segments, request)
+    if cast:
+        # Full ids, not a prefix. These are UUIDv7 and therefore time-ordered, so voices
+        # created in the same seeding run share their leading characters — truncating
+        # them printed two different voices as the same string.
+        log.info("tts_cast", job_id=str(job_id), cast={k: str(v) for k, v in cast.items()})
 
     for index, segment in enumerate(segments, start=1):
         if index % settings.cancel_check_every_segments == 0:
@@ -226,7 +251,7 @@ def _synthesize_segments(
                         ErrorCode.CANCELLED, detail=f"cancelled after {index - 1}/{total} segments"
                     )
 
-        voice_id, loader = _voice_for(segment, request, loaders)
+        voice_id, loader = _voice_for(segment, request, loaders, cast)
         result = engine.synthesize(
             segment.text,
             voice_id=str(voice_id),
@@ -250,6 +275,10 @@ def _reference_loaders(storage: ObjectStorage, request: _Request) -> dict[UUID, 
     loaders = {request.narrator_voice_id: _CachedLoader(storage, request.narrator_key)}
     if request.dialogue_voice_id is not None and request.dialogue_key is not None:
         loaders[request.dialogue_voice_id] = _CachedLoader(storage, request.dialogue_key)
+    if request.second_dialogue_voice_id is not None and request.second_dialogue_key is not None:
+        loaders[request.second_dialogue_voice_id] = _CachedLoader(
+            storage, request.second_dialogue_key
+        )
     return loaders
 
 
@@ -267,22 +296,55 @@ class _CachedLoader:
         return self._data
 
 
+def _build_cast(segments: list[Segment], request: _Request) -> dict[str, UUID]:
+    """Assign a voice to each character who speaks.
+
+    Characters are cast in order of first appearance, which is stable for a given story
+    and needs no state: the first person to speak gets the first dialogue voice, the
+    second gets the second. Beyond that the voices repeat, because the job carries two.
+
+    A job with only one dialogue voice casts everyone to it — exactly the old behaviour,
+    which is right: without a second voice there is nothing better to do, and it is not
+    this function's place to decide the narrator should start playing a part.
+    """
+    voices = [
+        voice_id
+        for voice_id in (request.dialogue_voice_id, request.second_dialogue_voice_id)
+        if voice_id is not None
+    ]
+    if not voices:
+        return {}
+
+    speakers = dict.fromkeys(
+        segment.speaker
+        for segment in segments
+        if segment.kind is SegmentKind.DIALOGUE and segment.speaker
+    )
+    return {name: voices[index % len(voices)] for index, name in enumerate(speakers)}
+
+
 def _voice_for(
-    segment: Segment, request: _Request, loaders: dict[UUID, _CachedLoader]
+    segment: Segment, request: _Request, loaders: dict[UUID, _CachedLoader], cast: dict[str, UUID]
 ) -> tuple[UUID, _CachedLoader]:
     """Pick the voice for a segment.
 
-    Dialogue uses the second voice only when the job asked for dialogue mode. v1
-    hardcoded ``voices/female.wav`` for every spoken line regardless of what the user
-    chose.
+    Dialogue uses a character's voice when the job asked for dialogue mode. v1 hardcoded
+    ``voices/female.wav`` for every spoken line regardless of what the user chose; the
+    first version of v2 improved on that only by making the single voice configurable,
+    which still read a two-hander in one voice.
+
+    A line whose speaker could not be attributed falls back to the first dialogue voice.
+    That is a deliberate choice over guessing: the fallback is merely unremarkable, and a
+    wrong voice is something the listener hears immediately.
     """
-    use_dialogue = (
+    if (
         segment.kind is SegmentKind.DIALOGUE
         and request.mode is VoiceMode.NARRATION_WITH_DIALOGUE
         and request.dialogue_voice_id is not None
-    )
-    voice_id = request.dialogue_voice_id if use_dialogue else request.narrator_voice_id
-    assert voice_id is not None  # narrowed by `use_dialogue`
+    ):
+        voice_id = cast.get(segment.speaker or "", request.dialogue_voice_id)
+    else:
+        voice_id = request.narrator_voice_id
     return voice_id, loaders[voice_id]
 
 
@@ -307,7 +369,10 @@ def _publish_progress(
 
 
 def _assemble(
-    segments: list[Segment], rendered: list[PcmAudio], settings: TtsWorkerSettings
+    segments: list[Segment],
+    rendered: list[PcmAudio],
+    settings: TtsWorkerSettings,
+    story: str,
 ) -> tuple[PcmAudio, list[dict[str, Any]]]:
     """Join the segments into one track, and record where each one lands in it."""
     pairs = [
@@ -327,19 +392,55 @@ def _assemble(
             ErrorCode.AUDIO_ASSEMBLY_FAILED, detail="segments came back at differing sample rates"
         )
 
-    joined = audio_ops.join(
-        usable,
-        sample_rate=sample_rate,
-        pause_ms=settings.segment_pause_ms,
-        lead_ms=settings.lead_silence_ms,
-    )
+    # Computed once and handed to both, so the track and the timeline cannot disagree
+    # about where anything is.
+    gaps = _gaps(pairs, settings, story)
+
+    joined = audio_ops.join(usable, sample_rate=sample_rate, gaps_ms=gaps)
     # Peak normalisation scales amplitude only, so the timeline is unaffected by it.
-    return audio_ops.normalise_peak(joined), _timeline(pairs, settings)
+    return audio_ops.normalise_peak(joined), _timeline(pairs, gaps)
 
 
-def _timeline(
-    pairs: list[tuple[Segment, PcmAudio]], settings: TtsWorkerSettings
-) -> list[dict[str, Any]]:
+def _gaps(
+    pairs: list[tuple[Segment, PcmAudio]], settings: TtsWorkerSettings, story: str
+) -> list[int]:
+    """How much silence precedes each segment, in milliseconds.
+
+    Three kinds of boundary, and treating them alike is what made the old output sound
+    chopped. A single 300 ms pause everywhere put the same gap between two halves of one
+    sentence, between two paragraphs, and between a question and its answer.
+
+    - **A change of speaker** gets the longest beat. The listener needs a moment to
+      register that someone else is talking.
+    - **A paragraph break** the author wrote gets an ordinary pause.
+    - **Everything else** is a boundary this pipeline invented, because the text was
+      longer than one synthesis request. A reader does not pause there, so the gap is
+      short — kept non-zero only because two independently rendered clips need a seam.
+    """
+    gaps = [settings.lead_silence_ms]
+
+    for (previous, _), (segment, _) in itertools.pairwise(pairs):
+        if _voice_changes(previous, segment):
+            gaps.append(settings.speaker_change_pause_ms)
+        elif "\n\n" in story[previous.end_char : segment.start_char]:
+            gaps.append(settings.segment_pause_ms)
+        else:
+            gaps.append(settings.continuation_pause_ms)
+
+    return gaps
+
+
+def _voice_changes(previous: Segment, segment: Segment) -> bool:
+    """Whether these two segments are spoken by different people.
+
+    Compares narration-or-whom, not the kind alone: two consecutive lines from the same
+    character are one voice continuing, while narration to dialogue is always a change
+    even when both would land on the same voice, because the register does.
+    """
+    return (previous.kind, previous.speaker) != (segment.kind, segment.speaker)
+
+
+def _timeline(pairs: list[tuple[Segment, PcmAudio]], gaps: list[int]) -> list[dict[str, Any]]:
     """Where each segment starts and ends in the assembled track.
 
     This is measured, not estimated. The worker rendered every segment and knows each
@@ -348,22 +449,22 @@ def _timeline(
     it. That is what lets the player highlight the story in time with the narration
     without anything having to listen to the audio afterwards.
 
-    It must stay in step with `join`: lead silence first, then one pause *between*
-    consecutive segments.
+    It takes the same `gaps` list that `join` is given, rather than recomputing the
+    spacing from settings. Two derivations of one number drift; one does not.
     """
-    cursor = settings.lead_silence_ms / 1000
+    cursor = 0.0
     timeline: list[dict[str, Any]] = []
 
-    for index, (segment, audio) in enumerate(pairs):
-        if index > 0:
-            cursor += settings.segment_pause_ms / 1000
+    for (segment, audio), gap_ms in zip(pairs, gaps, strict=True):
+        cursor += gap_ms / 1000
         start = cursor
         cursor += audio.duration_seconds
         timeline.append(
             {
-                "index": index,
+                "index": len(timeline),
                 "kind": segment.kind.value,
                 "text": segment.text,
+                "speaker": segment.speaker,
                 "start_char": segment.start_char,
                 "end_char": segment.end_char,
                 "start_seconds": round(start, 3),

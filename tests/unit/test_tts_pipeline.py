@@ -74,13 +74,152 @@ def test_segments_respect_the_size_limit() -> None:
     assert all(len(segment.text) <= 120 for segment in segments)
 
 
-def test_a_single_overlong_sentence_is_not_cut_mid_clause() -> None:
-    """A hard cut inside a clause sounds worse than one long segment."""
+def test_an_overlong_sentence_is_broken_at_a_clause() -> None:
+    """This used to be kept whole, and that was wrong.
+
+    The reasoning was that a hard cut inside a clause sounds worse than one long segment,
+    and that the engine would split it further anyway. The engine does not:
+    `enable_text_splitting` is off, and past its per-language character limit XTTS
+    truncates the audio and merely logs about it. A break at a comma is a breath; a
+    truncation is a sentence that stops existing.
+    """
+    story = (
+        "The keeper climbed the stairs while the wind rose, and the sea below turned the "
+        "colour of old iron, and somewhere beyond the headland a bell began to ring, slow "
+        "and uneven, and still he climbed."
+    )
+
+    segments = split_story(story, max_segment_chars=120)
+
+    assert len(segments) > 1
+    assert all(len(segment.text) <= 120 for segment in segments)
+    # Broken where the sentence already paused, not mid-phrase.
+    assert all(not segment.text.endswith(" ") for segment in segments)
+
+    # The pieces divide the sentence's span between them. Review caught this: giving
+    # every piece the whole sentence's span produces overlapping spans, and the
+    # read-along then clamps each one after the first to zero width -- so the back half
+    # of a long sentence is spoken with nothing highlighted, silently.
+    assert all(
+        earlier.end_char <= later.start_char for earlier, later in itertools.pairwise(segments)
+    )
+    assert segments[0].start_char == 0
+    assert segments[-1].end_char == len(story.rstrip())
+
+
+def test_a_clause_with_nowhere_to_break_is_split_between_words() -> None:
+    """Last resort. Still better than losing the end of the line entirely."""
     story = "word " * 200
 
     segments = split_story(story, max_segment_chars=100)
 
-    assert len(segments) == 1
+    assert len(segments) > 1
+    assert all(len(segment.text) <= 100 for segment in segments)
+    # No word is cut in half.
+    assert all(part == "word" for segment in segments for part in segment.text.split())
+
+
+SCENE = """Tom polished the lens in silence. His hands were steady.
+
+"I can't stay here forever," Lily said. She looked at her father.
+
+Tom set the cloth aside, his voice steady. "This place has kept us safe for years."
+
+"I love you, but I want to see cities," Lily said.
+
+Tom sighed, the sound mixing with the distant gulls. "Leaving means the light will be alone."
+
+The wind began to howl, rattling the panes.
+
+"Your mother would have wanted you to live fully," he said.
+
+"She taught me to love the world," she said."""
+
+
+def spoken(story: str) -> list[tuple[str | None, str]]:
+    return [
+        (segment.speaker, segment.text)
+        for segment in split_story(story)
+        if segment.kind is SegmentKind.DIALOGUE
+    ]
+
+
+def test_every_line_in_a_scene_is_attributed_to_the_right_character() -> None:
+    """The whole point of a second voice.
+
+    This scene is a real generation, and it defeated three earlier versions of the
+    attribution code in three different ways: Tom is never introduced by a speech tag
+    (only by action beats), two of the lines are tagged with a bare pronoun, and one
+    reply is separated from its speaker by a paragraph of narration. Each of those put a
+    line in the wrong character's voice, which is immediately audible.
+    """
+    assert [speaker for speaker, _ in spoken(SCENE)] == [
+        "Lily",
+        "Tom",
+        "Lily",
+        "Tom",
+        "Tom",
+        "Lily",
+    ]
+
+
+def test_a_speaker_is_found_from_an_action_beat() -> None:
+    """Prose attributes as often by action as by "said", and a model told to avoid
+    adverbial tags does it constantly. Reading only "said" left that character out of
+    the cast entirely, so all their lines fell back to the other one's voice."""
+    story = 'Tom set the cloth aside, his voice steady. "This place has kept us safe."'
+
+    assert spoken(story) == [("Tom", "This place has kept us safe.")]
+
+
+def test_a_sentence_opener_is_not_mistaken_for_a_character() -> None:
+    """Every sentence starts with a capital, so "The wind rose." looks like a name."""
+    story = 'The wind began to howl, rattling the panes. "We should go inside."'
+
+    assert spoken(story) == [(None, "We should go inside.")]
+
+
+def test_a_pronoun_tag_resolves_by_elimination() -> None:
+    """ "he said" names nobody, but it rules somebody out.
+
+    Ignoring it and falling through to alternation put the line in the other
+    character's voice — the one person the tag excludes.
+    """
+    story = (
+        'Tom watched the water, his coat wet through. "The tide is turning."\n\n'
+        '"We should turn back," Lily said. She shivered.\n\n'
+        '"Not yet," he said.'
+    )
+
+    assert spoken(story)[-1] == ("Tom", "Not yet,")
+
+
+def test_a_character_never_named_beside_a_line_cannot_be_cast() -> None:
+    """The boundary of what attribution can do, asserted rather than left to be found.
+
+    Every rule here resolves to a name the story attached to a spoken line somewhere. A
+    character introduced only in narration that carries no dialogue never enters the
+    cast, so a pronoun tag has nobody to resolve to and the line falls back to the first
+    voice. That is the intended failure: unremarkable, rather than confidently wrong.
+    """
+    story = (
+        "Tom watched the water. His coat was wet.\n\n"
+        '"We should turn back," Lily said. She shivered.\n\n'
+        '"Not yet," he said.'
+    )
+
+    assert spoken(story)[-1][0] != "Lily", "a 'he' line must never land on her"
+
+
+def test_an_unattributed_reply_alternates() -> None:
+    """A new paragraph of untagged speech after one character is the other replying."""
+    story = '"Sell it," Mara said.\n\n"Never."\n\n"Then keep it."'
+    speakers = [speaker for speaker, _ in spoken(story)]
+
+    assert speakers == ["Mara", None, "Mara"] or speakers[0] == "Mara"
+    # Whatever the unattributed lines resolve to, consecutive turns must not all collapse
+    # onto one speaker: that is the failure this rule exists to prevent.
+    assert speakers[1] != "Mara"
 
 
 def test_dialogue_is_separated_from_narration() -> None:
@@ -190,21 +329,37 @@ def test_fading_a_very_short_segment_does_not_erase_it() -> None:
     assert len(faded.samples) == len(short.samples)
 
 
-def test_join_inserts_a_pause_and_a_lead_in() -> None:
-    joined = audio_ops.join(
-        [tone(1.0), tone(1.0)], sample_rate=SAMPLE_RATE, pause_ms=300, lead_ms=300
-    )
+def test_join_places_the_silence_it_is_given_before_each_segment() -> None:
+    joined = audio_ops.join([tone(1.0), tone(1.0)], sample_rate=SAMPLE_RATE, gaps_ms=[300, 300])
 
-    # 0.3 lead + 1.0 + 0.3 pause + 1.0
+    # 0.3 lead + 1.0 + 0.3 gap + 1.0
     assert joined.duration_seconds == pytest.approx(2.6, abs=0.05)
 
 
-def test_join_skips_empty_segments() -> None:
+def test_join_can_give_each_boundary_a_different_silence() -> None:
+    """The reason `join` takes a list at all.
+
+    One pause length for every boundary put the same gap between two halves of a split
+    sentence, between two paragraphs, and between a question and its answer — which is
+    what made the narration sound chopped and the dialogue sound like one person.
+    """
     joined = audio_ops.join(
-        [tone(1.0), quiet(0.0), tone(1.0)], sample_rate=SAMPLE_RATE, pause_ms=0, lead_ms=0
+        [tone(1.0), tone(1.0), tone(1.0)], sample_rate=SAMPLE_RATE, gaps_ms=[300, 80, 420]
     )
 
-    assert joined.duration_seconds == pytest.approx(2.0, abs=0.05)
+    # 0.3 + 1.0 + 0.08 + 1.0 + 0.42 + 1.0
+    assert joined.duration_seconds == pytest.approx(3.8, abs=0.05)
+
+
+def test_join_refuses_a_gap_list_that_does_not_match() -> None:
+    """Silently tolerating a mismatch would desynchronise the read-along.
+
+    The timeline is computed from the same list. If `join` quietly dropped a segment or
+    reused a gap, the audio and the highlight would disagree by exactly that much, and
+    nothing would report it.
+    """
+    with pytest.raises(ValueError, match="expected 2 gaps"):
+        audio_ops.join([tone(1.0), tone(1.0)], sample_rate=SAMPLE_RATE, gaps_ms=[0])
 
 
 def test_normalisation_brings_a_quiet_mix_up() -> None:
@@ -509,9 +664,9 @@ def test_the_timeline_matches_where_the_audio_actually_lands(
     """The timeline is arithmetic that reproduces `join`, so it can drift from it.
 
     Checked against the real assembled track rather than against itself: the lead-in
-    comes first, one pause sits between consecutive segments, and the last segment ends
-    where the audio does. If `join` ever changes its spacing and this does not, these
-    are the assertions that fail.
+    comes first, every gap is one of the three the settings allow, and the last segment
+    ends where the audio does. If `join` ever changes its spacing and this does not,
+    these are the assertions that fail.
     """
     run(sessions, publisher, StubEngine(), storage, settings, written_job.id)
 
@@ -520,18 +675,137 @@ def test_the_timeline_matches_where_the_audio_actually_lands(
     assert timeline is not None
     assert len(timeline) == finished.segment_count
 
-    lead = settings.lead_silence_ms / 1000
-    pause = settings.segment_pause_ms / 1000
+    assert timeline[0]["start_seconds"] == pytest.approx(settings.lead_silence_ms / 1000, abs=0.002)
 
-    assert timeline[0]["start_seconds"] == pytest.approx(lead, abs=0.002)
-
+    permitted = {
+        settings.segment_pause_ms / 1000,
+        settings.continuation_pause_ms / 1000,
+        settings.speaker_change_pause_ms / 1000,
+    }
     for earlier, later in itertools.pairwise(timeline):
         assert earlier["end_seconds"] < later["start_seconds"]
         gap = later["start_seconds"] - earlier["end_seconds"]
-        assert gap == pytest.approx(pause, abs=0.002)
+        assert any(gap == pytest.approx(allowed, abs=0.002) for allowed in permitted), gap
 
     assert finished.audio_duration_seconds is not None
     assert timeline[-1]["end_seconds"] == pytest.approx(finished.audio_duration_seconds, abs=0.01)
+
+
+def test_a_change_of_speaker_gets_a_longer_beat_than_a_split() -> None:
+    """The three boundary kinds must produce three different silences.
+
+    Asserted on `_gaps` directly rather than through a rendered job, because the stub
+    engine's segmentation is not guaranteed to contain all three kinds — and a test that
+    only sometimes exercises the branch it is named for is worse than no test.
+    """
+    from tts_worker.pipeline import _gaps
+
+    story = 'Mara waited by the rail.\n\n"Say it," said Mara. "Say it plainly."'
+    segments = split_story(story, max_segment_chars=300)
+    pairs = [(segment, tone(0.2)) for segment in segments]
+
+    config = TtsWorkerSettings(
+        lead_silence_ms=300,
+        segment_pause_ms=300,
+        continuation_pause_ms=80,
+        speaker_change_pause_ms=420,
+    )
+    gaps = _gaps(pairs, config, story)
+
+    # narration | "Say it," (Mara) | said Mara. | "Say it plainly." (Mara)
+    assert [segment.kind.value for segment in segments] == [
+        "narration",
+        "dialogue",
+        "narration",
+        "dialogue",
+    ]
+
+    # Every boundary here crosses between the narrator and a character, including the two
+    # around the attribution tag: the tag is read by the narrator, so returning to Mara
+    # afterwards is a change of voice even though it is the same character speaking.
+    assert gaps == [300, 420, 420, 420]
+
+
+def test_a_split_that_only_exists_because_of_length_barely_pauses() -> None:
+    """The boundary this pipeline invented, as opposed to one the author wrote.
+
+    A reader does not pause in the middle of a paragraph, and the old code put the same
+    300 ms there as it put between paragraphs — roughly eight invented pauses in a
+    400-word story, which is what made narration sound sliced.
+    """
+    from tts_worker.pipeline import _gaps
+
+    story = " ".join(f"Sentence number {index} runs on for a while." for index in range(12))
+    segments = split_story(story, max_segment_chars=120)
+    pairs = [(segment, tone(0.2)) for segment in segments]
+
+    config = TtsWorkerSettings(
+        lead_silence_ms=300,
+        segment_pause_ms=300,
+        continuation_pause_ms=80,
+        speaker_change_pause_ms=420,
+    )
+    gaps = _gaps(pairs, config, story)
+
+    assert len(segments) > 2, "the story must actually be split for this to test anything"
+    # One paragraph, one speaker: every boundary is an artefact of the size limit.
+    assert gaps[1:] == [80] * (len(pairs) - 1)
+
+
+def test_a_second_voice_is_cast_to_the_second_character() -> None:
+    """One voice for every spoken line is what made a two-hander sound like one person."""
+    from tts_worker.pipeline import _build_cast, _Request
+
+    story = '"We should sell it," Mara said.\n\n"You cannot," Lila said.'
+    segments = split_story(story, max_segment_chars=300)
+
+    first, second = uuid7(), uuid7()
+    request = _Request(
+        story=story,
+        language="en",
+        speed=1.0,
+        mode=VoiceMode.NARRATION_WITH_DIALOGUE,
+        narrator_voice_id=uuid7(),
+        narrator_key="narrator.wav",
+        dialogue_voice_id=first,
+        dialogue_key="one.wav",
+        second_dialogue_voice_id=second,
+        second_dialogue_key="two.wav",
+    )
+
+    cast = _build_cast(segments, request)
+
+    assert cast["Mara"] == first
+    assert cast["Lila"] == second
+
+
+def test_without_a_second_voice_everyone_keeps_the_first() -> None:
+    """The old behaviour, preserved deliberately.
+
+    With one dialogue voice there is nothing better to do than use it for every
+    character. Promoting the narrator into a speaking part would be this function
+    inventing a casting decision the caller did not make.
+    """
+    from tts_worker.pipeline import _build_cast, _Request
+
+    story = '"We should sell it," Mara said.\n\n"You cannot," Lila said.'
+    segments = split_story(story, max_segment_chars=300)
+
+    only = uuid7()
+    request = _Request(
+        story=story,
+        language="en",
+        speed=1.0,
+        mode=VoiceMode.NARRATION_WITH_DIALOGUE,
+        narrator_voice_id=uuid7(),
+        narrator_key="narrator.wav",
+        dialogue_voice_id=only,
+        dialogue_key="one.wav",
+        second_dialogue_voice_id=None,
+        second_dialogue_key=None,
+    )
+
+    assert set(_build_cast(segments, request).values()) == {only}
 
 
 def test_the_timeline_carries_what_a_player_needs(

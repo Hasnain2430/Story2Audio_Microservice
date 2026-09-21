@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import io
 import wave
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import numpy as np
@@ -121,29 +122,27 @@ def silence(duration_ms: int, sample_rate: int) -> PcmAudio:
     return PcmAudio(samples=np.zeros(count, dtype=np.int16), sample_rate=sample_rate)
 
 
-def join(
-    segments: list[PcmAudio],
-    *,
-    sample_rate: int,
-    pause_ms: int = DEFAULT_SEGMENT_PAUSE_MS,
-    lead_ms: int = DEFAULT_LEAD_SILENCE_MS,
-) -> PcmAudio:
-    """Concatenate segments with a pause between them and a short lead-in.
+def join(segments: list[PcmAudio], *, sample_rate: int, gaps_ms: Sequence[int]) -> PcmAudio:
+    """Concatenate segments, preceding each one with the silence it was given.
 
-    The lead-in matters for playback: browsers and podcast players often clip the very
-    first moment of a stream, and v1 prefixed 500 ms for the same reason.
+    ``gaps_ms[i]`` is the silence placed *before* segment ``i``, so ``gaps_ms[0]`` is the
+    lead-in. The lead-in matters for playback: browsers and podcast players often clip the
+    very first moment of a stream, and v1 prefixed 500 ms for the same reason.
+
+    Taking a gap per boundary rather than one pause for all of them is what lets the
+    caller distinguish a paragraph break from a change of speaker from a split that only
+    happened because a segment hit the size limit. Those are three different silences, and
+    using one length for all three is audible: it chops narration into equal slabs and
+    lets a reply tread on the line it answers.
     """
     if not segments:
         return silence(0, sample_rate)
+    if len(gaps_ms) != len(segments):
+        raise ValueError(f"expected {len(segments)} gaps, got {len(gaps_ms)}")
 
-    gap = silence(pause_ms, sample_rate).samples
-    pieces: list[np.ndarray] = [silence(lead_ms, sample_rate).samples]
-
-    for index, segment in enumerate(segments):
-        if segment.is_empty:
-            continue
-        if index > 0:
-            pieces.append(gap)
+    pieces: list[np.ndarray] = []
+    for gap_ms, segment in zip(gaps_ms, segments, strict=True):
+        pieces.append(silence(gap_ms, sample_rate).samples)
         pieces.append(segment.samples)
 
     return PcmAudio(samples=np.concatenate(pieces), sample_rate=sample_rate)

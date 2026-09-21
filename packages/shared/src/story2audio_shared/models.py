@@ -183,6 +183,9 @@ class Job(Base, TimestampMixin):
     voice_id: Mapped[UUID] = mapped_column(
         Uuid, ForeignKey("voices.id", ondelete="RESTRICT"), nullable=False
     )
+    second_dialogue_voice_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("voices.id", ondelete="RESTRICT"), nullable=True
+    )
     dialogue_voice_id: Mapped[UUID | None] = mapped_column(
         Uuid, ForeignKey("voices.id", ondelete="RESTRICT"), nullable=True
     )
