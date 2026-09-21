@@ -23,7 +23,7 @@ from uuid import UUID
 
 from pydantic import Field, TypeAdapter
 
-from story2audio_shared.enums import JobStatus
+from story2audio_shared.enums import JobStatus, SegmentKind
 from story2audio_shared.errors import ErrorCode
 from story2audio_shared.schemas import ApiModel, AudioAsset
 
@@ -101,6 +101,40 @@ class ProgressEvent(BaseEvent):
         return min(1.0, self.done / self.total)
 
 
+class SegmentReadyEvent(BaseEvent):
+    """One segment has been rendered, uploaded, and can be played.
+
+    This is what makes the audio arrive while it is still being made. The first segment
+    of a three-minute story is finished about seven seconds in; without this the listener
+    waits for the last one before hearing the first.
+
+    It deliberately carries **no URL**. Signing here would put this worker's clock and a
+    fixed TTL inside a durable event, and the event may be replayed to a client that
+    connects much later. The client asks the gateway for the audio by index, and the
+    gateway signs on read, where the TTL means something (ADR-0003).
+
+    ``start_seconds`` is the segment's position in the finished track, including the
+    silence in front of it, so a client can schedule segments against one clock and
+    reproduce exactly the file the worker will assemble.
+
+    Adding a variant is backwards compatible: a client that does not know this type
+    ignores it and keeps using the terminal event, which is why the schema version does
+    not change.
+    """
+
+    type: Literal["segment_ready"] = "segment_ready"
+    index: int = Field(ge=0)
+    total: int = Field(ge=1)
+    kind: SegmentKind
+    text: str
+    speaker: str | None = None
+    start_char: int = Field(ge=0)
+    end_char: int = Field(ge=0)
+    #: Position in the assembled track, silence in front of it included.
+    start_seconds: float = Field(ge=0)
+    end_seconds: float = Field(ge=0)
+
+
 class DoneEvent(BaseEvent):
     """Terminal: the audio is rendered, uploaded and addressable."""
 
@@ -133,6 +167,7 @@ JobEvent = Annotated[
     | TokenEvent
     | StoryDoneEvent
     | ProgressEvent
+    | SegmentReadyEvent
     | DoneEvent
     | FailedEvent
     | CancelledEvent,

@@ -180,6 +180,7 @@
           "prompt_empty",
           "job_not_found",
           "job_not_cancellable",
+          "segment_not_found",
           "voice_not_found",
           "voice_forbidden",
           "voice_invalid_audio",
@@ -979,6 +980,52 @@
           }
         },
         "summary": "Fetch one job",
+        "tags": [
+          "jobs"
+        ]
+      }
+    },
+    "/v1/jobs/{job_id}/segments/{index}/audio": {
+      "get": {
+        "description": "Redirect to a freshly signed URL for one segment of a job.\n\nThis is what makes playback start before the job finishes: the worker publishes each\nsegment as it is rendered, and the client fetches them here by index. A stable URL\nrather than a signed one in the event, so the link cannot expire between being\nannounced and being used.\n\n307 rather than 302: the method must be preserved, and browsers and audio elements\nboth follow it to the object store without a second round trip through this service.",
+        "operationId": "get_segment_audio_v1_jobs__job_id__segments__index__audio_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "index",
+            "required": true,
+            "schema": {
+              "title": "Index",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "307": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Play one rendered segment",
         "tags": [
           "jobs"
         ]

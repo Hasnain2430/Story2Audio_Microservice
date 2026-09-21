@@ -106,6 +106,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/jobs/{job_id}/segments/{index}/audio": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Play one rendered segment
+         * @description Redirect to a freshly signed URL for one segment of a job.
+         *
+         *     This is what makes playback start before the job finishes: the worker publishes each
+         *     segment as it is rendered, and the client fetches them here by index. A stable URL
+         *     rather than a signed one in the event, so the link cannot expire between being
+         *     announced and being used.
+         *
+         *     307 rather than 302: the method must be preserved, and browsers and audio elements
+         *     both follow it to the object store without a second round trip through this service.
+         */
+        get: operations["get_segment_audio_v1_jobs__job_id__segments__index__audio_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/voices": {
         parameters: {
             query?: never;
@@ -260,7 +288,7 @@ export interface components {
          *     bodies, so the frontend can branch on the cause without parsing prose.
          * @enum {string}
          */
-        ErrorCode: "validation_failed" | "prompt_too_long" | "prompt_empty" | "job_not_found" | "job_not_cancellable" | "voice_not_found" | "voice_forbidden" | "voice_invalid_audio" | "voice_too_short" | "voice_too_long" | "voice_too_large" | "voice_name_taken" | "dialogue_voice_required" | "rate_limited" | "concurrency_limit_reached" | "daily_cap_reached" | "llm_unavailable" | "llm_timeout" | "llm_rate_limited" | "llm_content_rejected" | "story_empty" | "tts_unavailable" | "tts_timeout" | "tts_capacity" | "audio_assembly_failed" | "storage_unavailable" | "cancelled" | "internal";
+        ErrorCode: "validation_failed" | "prompt_too_long" | "prompt_empty" | "job_not_found" | "job_not_cancellable" | "segment_not_found" | "voice_not_found" | "voice_forbidden" | "voice_invalid_audio" | "voice_too_short" | "voice_too_long" | "voice_too_large" | "voice_name_taken" | "dialogue_voice_required" | "rate_limited" | "concurrency_limit_reached" | "daily_cap_reached" | "llm_unavailable" | "llm_timeout" | "llm_rate_limited" | "llm_content_rejected" | "story_empty" | "tts_unavailable" | "tts_timeout" | "tts_capacity" | "audio_assembly_failed" | "storage_unavailable" | "cancelled" | "internal";
         /**
          * ErrorDetail
          * @description Public description of a failure. Never carries internal detail.
@@ -652,6 +680,36 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["JobResponse"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_segment_audio_v1_jobs__job_id__segments__index__audio_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+                index: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            307: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

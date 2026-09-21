@@ -6,7 +6,6 @@ against a stub engine. `tasks.py` is the thin Celery wrapper.
 
 from __future__ import annotations
 
-import itertools
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -17,11 +16,17 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from story2audio_shared.enums import AudioFormat, JobStatus, SegmentKind, VoiceMode
 from story2audio_shared.errors import AppError, ErrorCode
-from story2audio_shared.events import DoneEvent, JobEvent, ProgressEvent, StatusEvent
+from story2audio_shared.events import (
+    DoneEvent,
+    JobEvent,
+    ProgressEvent,
+    SegmentReadyEvent,
+    StatusEvent,
+)
 from story2audio_shared.logging import get_logger
 from story2audio_shared.models import Job, Voice
 from story2audio_shared.schemas import AudioAsset
-from story2audio_shared.storage import ObjectStorage, audio_key
+from story2audio_shared.storage import ObjectStorage, audio_key, segment_audio_key
 from story2audio_shared.worker import (
     SyncEventPublisher,
     advance_status,
@@ -112,10 +117,10 @@ def run_tts_stage(
     if not _begin(session_factory, publisher, job_id, len(segments)):
         return StageOutcome(completed=False)
 
-    rendered = _synthesize_segments(
+    assembler = _synthesize_segments(
         session_factory, publisher, engine, storage, settings, job_id, request, segments
     )
-    mixed, timeline = _assemble(segments, rendered, settings, request.story)
+    mixed, timeline = assembler.finish()
     assets = _upload(storage, job_id, mixed, settings)
 
     with session_scope(session_factory) as session:
@@ -226,10 +231,16 @@ def _synthesize_segments(
     job_id: UUID,
     request: _Request,
     segments: list[Segment],
-) -> list[PcmAudio]:
-    """Render each segment, publishing progress as it goes."""
+) -> _Assembler:
+    """Render each segment, publishing it as it goes.
+
+    Each finished segment is uploaded and announced immediately. The first one is ready
+    seconds into a job that takes minutes, and a listener can start on it while the rest
+    are still being made -- which is the difference between "the queue means you are not
+    blocked" and "you are already listening".
+    """
     total = len(segments)
-    rendered: list[PcmAudio] = []
+    assembler = _Assembler(settings, request.story)
 
     # Reference audio is fetched at most once per voice per job, and only if the engine
     # reports a cache miss.
@@ -264,11 +275,67 @@ def _synthesize_segments(
         trimmed = audio_ops.trim_silence(
             result.audio, threshold_dbfs=settings.silence_threshold_dbfs
         )
-        rendered.append(audio_ops.apply_fades(trimmed, fade_ms=settings.fade_ms))
+        placed = assembler.place(segment, audio_ops.apply_fades(trimmed, fade_ms=settings.fade_ms))
+
+        if placed is not None:
+            _publish_segment(
+                session_factory, publisher, storage, job_id, placed, assembler.count - 1, total
+            )
 
         _publish_progress(session_factory, publisher, job_id, done=index, total=total)
 
-    return rendered
+    return assembler
+
+
+def _publish_segment(
+    session_factory: sessionmaker[Session],
+    publisher: SyncEventPublisher,
+    storage: ObjectStorage,
+    job_id: UUID,
+    placed: _Placed,
+    index: int,
+    total: int,
+) -> None:
+    """Upload one rendered segment and announce that it can be played.
+
+    Uploaded as WAV rather than MP3 on purpose. MP3 frames carry encoder delay and
+    padding, so decoding a run of separately encoded clips and butting them together
+    inserts a few milliseconds of silence at every seam -- inaudible in one file,
+    a stutter once per segment across a whole story. The assembled download is still
+    MP3; this is the copy that exists to be scheduled against a clock.
+
+    A failed upload must not fail the job. The segment is already rendered and will be in
+    the final track; losing it here costs progressive playback for that one segment and
+    nothing else.
+    """
+    try:
+        storage.put_bytes(
+            segment_audio_key(job_id, index),
+            audio_ops.encode_wav(placed.audio),
+            content_type="audio/wav",
+        )
+    except Exception as exc:  # noqa: BLE001 - see docstring; never fail a job for this
+        log.warning("segment_publish_failed", job_id=str(job_id), index=index, error=str(exc))
+        return
+
+    def build(seq: int, at: datetime) -> JobEvent:
+        return SegmentReadyEvent(
+            job_id=job_id,
+            seq=seq,
+            at=at,
+            index=index,
+            total=total,
+            kind=placed.segment.kind,
+            text=placed.segment.text,
+            speaker=placed.segment.speaker,
+            start_char=placed.segment.start_char,
+            end_char=placed.segment.end_char,
+            start_seconds=placed.start_seconds,
+            end_seconds=placed.end_seconds,
+        )
+
+    with session_scope(session_factory) as session:
+        publisher.publish(session, job_id, build)
 
 
 def _reference_loaders(storage: ObjectStorage, request: _Request) -> dict[UUID, _CachedLoader]:
@@ -365,71 +432,6 @@ def _publish_progress(
         publisher.publish(session, job_id, build)
 
 
-# --- Assembly and delivery -----------------------------------------------------------------------
-
-
-def _assemble(
-    segments: list[Segment],
-    rendered: list[PcmAudio],
-    settings: TtsWorkerSettings,
-    story: str,
-) -> tuple[PcmAudio, list[dict[str, Any]]]:
-    """Join the segments into one track, and record where each one lands in it."""
-    pairs = [
-        (segment, audio)
-        for segment, audio in zip(segments, rendered, strict=True)
-        if not audio.is_empty
-    ]
-    if not pairs:
-        raise AppError(ErrorCode.AUDIO_ASSEMBLY_FAILED, detail="every segment rendered silent")
-
-    usable = [audio for _, audio in pairs]
-    sample_rate = usable[0].sample_rate
-    if any(audio.sample_rate != sample_rate for audio in usable):
-        # Concatenating mismatched rates would play back at the wrong speed rather than
-        # failing, which is the kind of bug that reaches a listener before a log.
-        raise AppError(
-            ErrorCode.AUDIO_ASSEMBLY_FAILED, detail="segments came back at differing sample rates"
-        )
-
-    # Computed once and handed to both, so the track and the timeline cannot disagree
-    # about where anything is.
-    gaps = _gaps(pairs, settings, story)
-
-    joined = audio_ops.join(usable, sample_rate=sample_rate, gaps_ms=gaps)
-    # Peak normalisation scales amplitude only, so the timeline is unaffected by it.
-    return audio_ops.normalise_peak(joined), _timeline(pairs, gaps)
-
-
-def _gaps(
-    pairs: list[tuple[Segment, PcmAudio]], settings: TtsWorkerSettings, story: str
-) -> list[int]:
-    """How much silence precedes each segment, in milliseconds.
-
-    Three kinds of boundary, and treating them alike is what made the old output sound
-    chopped. A single 300 ms pause everywhere put the same gap between two halves of one
-    sentence, between two paragraphs, and between a question and its answer.
-
-    - **A change of speaker** gets the longest beat. The listener needs a moment to
-      register that someone else is talking.
-    - **A paragraph break** the author wrote gets an ordinary pause.
-    - **Everything else** is a boundary this pipeline invented, because the text was
-      longer than one synthesis request. A reader does not pause there, so the gap is
-      short — kept non-zero only because two independently rendered clips need a seam.
-    """
-    gaps = [settings.lead_silence_ms]
-
-    for (previous, _), (segment, _) in itertools.pairwise(pairs):
-        if _voice_changes(previous, segment):
-            gaps.append(settings.speaker_change_pause_ms)
-        elif "\n\n" in story[previous.end_char : segment.start_char]:
-            gaps.append(settings.segment_pause_ms)
-        else:
-            gaps.append(settings.continuation_pause_ms)
-
-    return gaps
-
-
 def _voice_changes(previous: Segment, segment: Segment) -> bool:
     """Whether these two segments are spoken by different people.
 
@@ -440,39 +442,135 @@ def _voice_changes(previous: Segment, segment: Segment) -> bool:
     return (previous.kind, previous.speaker) != (segment.kind, segment.speaker)
 
 
-def _timeline(pairs: list[tuple[Segment, PcmAudio]], gaps: list[int]) -> list[dict[str, Any]]:
-    """Where each segment starts and ends in the assembled track.
+@dataclass(slots=True)
+class _Placed:
+    """One rendered segment, with the silence in front of it and where it lands."""
 
-    This is measured, not estimated. The worker rendered every segment and knows each
-    one's exact duration, and it is the worker that inserts the lead-in and the pauses --
-    so the arithmetic here reproduces `audio_ops.join` exactly rather than approximating
-    it. That is what lets the player highlight the story in time with the narration
-    without anything having to listen to the audio afterwards.
+    segment: Segment
+    audio: PcmAudio
+    gap_ms: int
+    start_seconds: float
+    end_seconds: float
 
-    It takes the same `gaps` list that `join` is given, rather than recomputing the
-    spacing from settings. Two derivations of one number drift; one does not.
+
+class _Assembler:
+    """Places segments on the timeline as they are rendered.
+
+    Assembly used to happen after every segment was finished, which was fine while the
+    listener could not hear anything until then anyway. Progressive playback needs each
+    segment's position *at the moment it is rendered*, so it can be published and played
+    while the rest are still being made.
+
+    Nothing about the arithmetic changes — the gap before a segment depends only on the
+    segment before it and the story text, both of which are known as soon as it is
+    rendered. What changes is that there is now one object that owns it, so the streamed
+    positions and the final track cannot disagree.
+
+    Empty renders are dropped here rather than filtered later: a segment that came back
+    silent must not occupy time or consume a gap.
     """
-    cursor = 0.0
-    timeline: list[dict[str, Any]] = []
 
-    for (segment, audio), gap_ms in zip(pairs, gaps, strict=True):
-        cursor += gap_ms / 1000
-        start = cursor
-        cursor += audio.duration_seconds
-        timeline.append(
-            {
-                "index": len(timeline),
-                "kind": segment.kind.value,
-                "text": segment.text,
-                "speaker": segment.speaker,
-                "start_char": segment.start_char,
-                "end_char": segment.end_char,
-                "start_seconds": round(start, 3),
-                "end_seconds": round(cursor, 3),
-            }
+    def __init__(self, settings: TtsWorkerSettings, story: str) -> None:
+        self._settings = settings
+        self._story = story
+        self._placed: list[_Placed] = []
+        self._cursor = 0.0
+
+    def place(self, segment: Segment, audio: PcmAudio) -> _Placed | None:
+        """Add a rendered segment, returning where it landed, or ``None`` if silent."""
+        if audio.is_empty:
+            return None
+
+        gap_ms = self._gap_before(segment)
+        self._cursor += gap_ms / 1000
+        start = self._cursor
+        self._cursor += audio.duration_seconds
+
+        placed = _Placed(
+            segment=segment,
+            audio=audio,
+            gap_ms=gap_ms,
+            start_seconds=round(start, 3),
+            end_seconds=round(self._cursor, 3),
         )
+        self._placed.append(placed)
+        return placed
 
-    return timeline
+    def _gap_before(self, segment: Segment) -> int:
+        """How much silence precedes this segment, in milliseconds.
+
+        Three kinds of boundary, and treating them alike is what made the old output
+        sound chopped. A single 300 ms pause everywhere put the same gap between two
+        halves of one sentence, between two paragraphs, and between a question and its
+        answer.
+
+        - **A change of speaker** gets the longest beat. The listener needs a moment to
+          register that someone else is talking.
+        - **A paragraph break** the author wrote gets an ordinary pause.
+        - **Everything else** is a boundary this pipeline invented, because the text was
+          longer than one synthesis request. A reader does not pause there, so the gap is
+          short — kept non-zero only because two independently rendered clips need a seam.
+        """
+        if not self._placed:
+            return self._settings.lead_silence_ms
+
+        previous = self._placed[-1].segment
+        if _voice_changes(previous, segment):
+            return self._settings.speaker_change_pause_ms
+        if "\n\n" in self._story[previous.end_char : segment.start_char]:
+            return self._settings.segment_pause_ms
+        return self._settings.continuation_pause_ms
+
+    @property
+    def count(self) -> int:
+        return len(self._placed)
+
+    def finish(self) -> tuple[PcmAudio, list[dict[str, Any]]]:
+        """The assembled track, and the timeline describing it."""
+        if not self._placed:
+            raise AppError(ErrorCode.AUDIO_ASSEMBLY_FAILED, detail="every segment rendered silent")
+
+        sample_rate = self._placed[0].audio.sample_rate
+        if any(placed.audio.sample_rate != sample_rate for placed in self._placed):
+            # Concatenating mismatched rates would play back at the wrong speed rather
+            # than failing, which is the kind of bug that reaches a listener before a log.
+            raise AppError(
+                ErrorCode.AUDIO_ASSEMBLY_FAILED,
+                detail="segments came back at differing sample rates",
+            )
+
+        joined = audio_ops.join(
+            [placed.audio for placed in self._placed],
+            sample_rate=sample_rate,
+            gaps_ms=[placed.gap_ms for placed in self._placed],
+        )
+        # Peak normalisation scales amplitude only, so the timeline is unaffected by it.
+        return audio_ops.normalise_peak(joined), self.timeline()
+
+    def timeline(self) -> list[dict[str, Any]]:
+        """Where each segment starts and ends in the assembled track.
+
+        Measured, not estimated: the worker rendered every segment, knows each one's
+        exact duration, and inserted every pause itself. It is the same arithmetic that
+        produced the audio rather than a second derivation of it, which is what lets a
+        player highlight the story in time without anything having to listen afterwards.
+        """
+        return [
+            {
+                "index": index,
+                "kind": placed.segment.kind.value,
+                "text": placed.segment.text,
+                "speaker": placed.segment.speaker,
+                "start_char": placed.segment.start_char,
+                "end_char": placed.segment.end_char,
+                "start_seconds": placed.start_seconds,
+                "end_seconds": placed.end_seconds,
+            }
+            for index, placed in enumerate(self._placed)
+        ]
+
+
+# --- Assembly and delivery -----------------------------------------------------------------------
 
 
 def _upload(

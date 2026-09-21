@@ -25,12 +25,22 @@ from botocore.exceptions import BotoCoreError, ClientError
 from story2audio_shared.config import StorageSettings, storage_settings
 from story2audio_shared.enums import AudioFormat
 from story2audio_shared.errors import AppError, ErrorCode
+from story2audio_shared.logging import get_logger
 
 if TYPE_CHECKING:
     from types_boto3_s3.client import S3Client
 
+log = get_logger(__name__)
+
 VOICE_PREFIX: Final = "voices"
 AUDIO_PREFIX: Final = "audio"
+#: Per-segment audio, published during synthesis so playback can start early. Kept
+#: under its own top-level prefix rather than beside the finished track, so the
+#: expiry rule can target it with no chance of matching the real output.
+SEGMENT_PREFIX: Final = "segments"
+#: How long a streamed segment survives. One day is the smallest an S3 lifecycle rule
+#: can express, and far longer than the minutes a client needs it for.
+SEGMENT_RETENTION_DAYS: Final = 1
 
 _CONTENT_TYPES: Final[dict[AudioFormat, str]] = {
     AudioFormat.MP3: "audio/mpeg",
@@ -51,6 +61,18 @@ def voice_key(voice_id: UUID) -> str:
 def audio_key(job_id: UUID, audio_format: AudioFormat) -> str:
     """Storage key for a job's rendered audio."""
     return f"{AUDIO_PREFIX}/{job_id}.{audio_format.value}"
+
+
+def segment_audio_key(job_id: UUID, index: int) -> str:
+    """Storage key for one rendered segment, published before the job finishes.
+
+    These exist so playback can start while synthesis is still running, and are
+    superseded by the assembled track the moment it is uploaded. They are expired by the
+    lifecycle rule in :meth:`ObjectStorage.ensure_bucket` rather than deleted inline: a
+    client is usually still playing the early segments when the last one finishes, and a
+    job that failed half-way should leave what it did render addressable.
+    """
+    return f"{SEGMENT_PREFIX}/{job_id}/segment-{index:04d}.wav"
 
 
 @dataclass(frozen=True, slots=True)
@@ -217,6 +239,37 @@ class ObjectStorage:
                     ErrorCode.STORAGE_UNAVAILABLE,
                     detail=f"create_bucket failed for {self.bucket}: {exc}",
                 ) from exc
+
+        self._expire_segments()
+
+    def _expire_segments(self) -> None:
+        """Expire streamed segments, so early playback does not cost storage forever.
+
+        Segments are WAV, and a story's worth of them runs about three times the size of
+        its finished MP3. Without this they accumulate for every job ever run — a real
+        bill rather than a rounding error, and one that grows fastest exactly when the
+        product is being used.
+
+        Best effort. A deployment where the application's credentials cannot write bucket
+        policy is the *expected* one — there the bucket is provisioned out of band and
+        this rule is applied alongside it — so a refusal is logged rather than raised.
+        """
+        try:
+            self._client.put_bucket_lifecycle_configuration(
+                Bucket=self.bucket,
+                LifecycleConfiguration={
+                    "Rules": [
+                        {
+                            "ID": "expire-streamed-segments",
+                            "Status": "Enabled",
+                            "Filter": {"Prefix": f"{SEGMENT_PREFIX}/"},
+                            "Expiration": {"Days": SEGMENT_RETENTION_DAYS},
+                        }
+                    ]
+                },
+            )
+        except (BotoCoreError, ClientError) as exc:
+            log.warning("segment_lifecycle_not_applied", bucket=self.bucket, error=str(exc))
 
 
 @lru_cache(maxsize=1)

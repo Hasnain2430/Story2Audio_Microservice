@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import io
 import itertools
+import json
 import wave
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -40,7 +41,7 @@ from tts_worker import audio as audio_ops
 from tts_worker.audio import PcmAudio, from_pcm_bytes
 from tts_worker.engine_client import SynthesisResult
 from tts_worker.pipeline import run_tts_stage
-from tts_worker.segmentation import clean_segment_text, split_story
+from tts_worker.segmentation import Segment, clean_segment_text, split_story
 from tts_worker.settings import TtsWorkerSettings
 
 SAMPLE_RATE = 24_000
@@ -440,8 +441,13 @@ class StubStorage:
     objects: dict[str, bytes] = field(default_factory=dict)
     content_types: dict[str, str] = field(default_factory=dict)
     reads: list[str] = field(default_factory=list)
+    #: Any key containing this substring raises on write. Used to prove that losing a
+    #: streamed segment costs early playback and not the recording.
+    fail_on: str | None = None
 
     def put_bytes(self, key: str, data: bytes, *, content_type: str) -> None:
+        if self.fail_on is not None and self.fail_on in key:
+            raise RuntimeError("object store is having a moment")
         self.objects[key] = data
         self.content_types[key] = content_type
 
@@ -534,9 +540,35 @@ def redis_client() -> Any:
     client.close()
 
 
+class RecordingPublisher(SyncEventPublisher):
+    """Publishes normally, and keeps a copy of everything it published.
+
+    Asserting on the events themselves rather than on a Redis subscription: fakeredis's
+    synchronous pub/sub drops messages depending on when the subscriber is attached, so a
+    test built on it fails for reasons that have nothing to do with the pipeline.
+    """
+
+    def __init__(self, redis: fakeredis.FakeRedis) -> None:
+        super().__init__(redis)
+        self.events: list[dict[str, Any]] = []
+
+    def publish(self, session: Session, job_id: UUID, factory: Any) -> None:
+        def recording(seq: int, at: datetime) -> Any:
+            event = factory(seq, at)
+            self.events.append(json.loads(event.model_dump_json()))
+            return event
+
+        super().publish(session, job_id, recording)
+
+
+def published_events(publisher: SyncEventPublisher) -> list[dict[str, Any]]:
+    assert isinstance(publisher, RecordingPublisher)
+    return publisher.events
+
+
 @pytest.fixture
 def publisher(redis_client: fakeredis.FakeRedis) -> SyncEventPublisher:
-    return SyncEventPublisher(redis_client)
+    return RecordingPublisher(redis_client)
 
 
 @pytest.fixture
@@ -691,6 +723,27 @@ def test_the_timeline_matches_where_the_audio_actually_lands(
     assert timeline[-1]["end_seconds"] == pytest.approx(finished.audio_duration_seconds, abs=0.01)
 
 
+def place_all(segments: list[Segment], story: str) -> list[int]:
+    """Run the assembler over rendered segments and report the gap chosen for each."""
+    from tts_worker.pipeline import _Assembler
+
+    assembler = _Assembler(
+        TtsWorkerSettings(
+            lead_silence_ms=300,
+            segment_pause_ms=300,
+            continuation_pause_ms=80,
+            speaker_change_pause_ms=420,
+        ),
+        story,
+    )
+    gaps: list[int] = []
+    for segment in segments:
+        placed = assembler.place(segment, tone(0.2))
+        assert placed is not None
+        gaps.append(placed.gap_ms)
+    return gaps
+
+
 def test_a_change_of_speaker_gets_a_longer_beat_than_a_split() -> None:
     """The three boundary kinds must produce three different silences.
 
@@ -698,19 +751,9 @@ def test_a_change_of_speaker_gets_a_longer_beat_than_a_split() -> None:
     engine's segmentation is not guaranteed to contain all three kinds — and a test that
     only sometimes exercises the branch it is named for is worse than no test.
     """
-    from tts_worker.pipeline import _gaps
-
     story = 'Mara waited by the rail.\n\n"Say it," said Mara. "Say it plainly."'
     segments = split_story(story, max_segment_chars=300)
-    pairs = [(segment, tone(0.2)) for segment in segments]
-
-    config = TtsWorkerSettings(
-        lead_silence_ms=300,
-        segment_pause_ms=300,
-        continuation_pause_ms=80,
-        speaker_change_pause_ms=420,
-    )
-    gaps = _gaps(pairs, config, story)
+    gaps = place_all(segments, story)
 
     # narration | "Say it," (Mara) | said Mara. | "Say it plainly." (Mara)
     assert [segment.kind.value for segment in segments] == [
@@ -733,23 +776,13 @@ def test_a_split_that_only_exists_because_of_length_barely_pauses() -> None:
     300 ms there as it put between paragraphs — roughly eight invented pauses in a
     400-word story, which is what made narration sound sliced.
     """
-    from tts_worker.pipeline import _gaps
-
     story = " ".join(f"Sentence number {index} runs on for a while." for index in range(12))
     segments = split_story(story, max_segment_chars=120)
-    pairs = [(segment, tone(0.2)) for segment in segments]
-
-    config = TtsWorkerSettings(
-        lead_silence_ms=300,
-        segment_pause_ms=300,
-        continuation_pause_ms=80,
-        speaker_change_pause_ms=420,
-    )
-    gaps = _gaps(pairs, config, story)
+    gaps = place_all(segments, story)
 
     assert len(segments) > 2, "the story must actually be split for this to test anything"
     # One paragraph, one speaker: every boundary is an artefact of the size limit.
-    assert gaps[1:] == [80] * (len(pairs) - 1)
+    assert gaps[1:] == [80] * (len(segments) - 1)
 
 
 def test_a_second_voice_is_cast_to_the_second_character() -> None:
@@ -806,6 +839,88 @@ def test_without_a_second_voice_everyone_keeps_the_first() -> None:
     )
 
     assert set(_build_cast(segments, request).values()) == {only}
+
+
+def test_every_segment_is_published_while_the_job_is_still_running(
+    sessions: sessionmaker[Session],
+    publisher: SyncEventPublisher,
+    storage: StubStorage,
+    settings: TtsWorkerSettings,
+    written_job: Job,
+) -> None:
+    """The point of the whole change: audio exists before the job is done.
+
+    Each segment is uploaded and announced as it lands, so the first one is playable
+    seconds into a job that takes minutes. Without this the listener waits for the last
+    segment before hearing the first — the same shape of mistake v1 made one level up,
+    where the request blocked until everything was finished.
+    """
+    run(sessions, publisher, StubEngine(), storage, settings, written_job.id)
+
+    finished = reload_job(sessions, written_job.id)
+    assert finished.segment_count is not None
+
+    ready = [event for event in published_events(publisher) if event.get("type") == "segment_ready"]
+    assert len(ready) == finished.segment_count
+
+    for position, frame in enumerate(ready):
+        assert frame["index"] == position
+        assert f"segment-{position:04d}.wav" in " ".join(storage.objects)
+        # No URL in the event: signing here would bake a TTL into a durable event.
+        assert "url" not in frame
+
+
+def test_a_published_segment_lands_where_the_final_track_puts_it(
+    sessions: sessionmaker[Session],
+    publisher: SyncEventPublisher,
+    storage: StubStorage,
+    settings: TtsWorkerSettings,
+    written_job: Job,
+) -> None:
+    """Streamed positions and the assembled file must agree exactly.
+
+    A client schedules the segments it receives against one clock to reproduce the track
+    the worker is building. If the announced start times drifted from the finished audio,
+    progressive playback would sound different from the download of the same story — and
+    only the second one would be right.
+    """
+    run(sessions, publisher, StubEngine(), storage, settings, written_job.id)
+
+    finished = reload_job(sessions, written_job.id)
+    timeline = finished.segment_timeline
+    assert timeline is not None
+
+    ready = [event for event in published_events(publisher) if event.get("type") == "segment_ready"]
+    assert [event["start_seconds"] for event in ready] == [
+        entry["start_seconds"] for entry in timeline
+    ]
+    assert [event["end_seconds"] for event in ready] == [entry["end_seconds"] for entry in timeline]
+
+
+def test_a_failed_segment_upload_does_not_fail_the_job(
+    sessions: sessionmaker[Session],
+    publisher: SyncEventPublisher,
+    storage: StubStorage,
+    settings: TtsWorkerSettings,
+    written_job: Job,
+) -> None:
+    """Progressive playback is an enhancement and must never cost the story.
+
+    The segment is already rendered and will be in the assembled track either way;
+    losing the streamed copy costs early playback for that one segment. Failing the job
+    over it would trade the whole recording for a convenience.
+    """
+
+    # Set after the fixtures have seeded the reference voices, so only the streamed
+    # segment uploads fail.
+    storage.fail_on = "segment-"
+
+    outcome = run(sessions, publisher, StubEngine(), storage, settings, written_job.id)
+
+    assert outcome.completed
+    finished = reload_job(sessions, written_job.id)
+    assert finished.status is JobStatus.DONE
+    assert finished.audio_key_mp3 in storage.objects
 
 
 def test_the_timeline_carries_what_a_player_needs(

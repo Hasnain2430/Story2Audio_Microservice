@@ -12,7 +12,14 @@ import pytest
 
 from story2audio_shared.enums import AudioFormat
 from story2audio_shared.ids import uuid7
-from story2audio_shared.storage import AUDIO_PREFIX, VOICE_PREFIX, audio_key, voice_key
+from story2audio_shared.storage import (
+    AUDIO_PREFIX,
+    SEGMENT_PREFIX,
+    VOICE_PREFIX,
+    audio_key,
+    segment_audio_key,
+    voice_key,
+)
 
 
 def test_voice_keys_are_unique_per_voice() -> None:
@@ -46,3 +53,29 @@ def test_voice_keys_are_confined_to_their_prefix() -> None:
     assert key.startswith(f"{VOICE_PREFIX}/")
     assert ".." not in key
     assert not key.startswith("/")
+
+
+def test_segments_live_under_their_own_prefix() -> None:
+    """Not beside the finished track, and the distinction is load-bearing.
+
+    Streamed segments are expired by a bucket lifecycle rule. S3 lifecycle filters match
+    on a key prefix, so if segments sat under `audio/{job_id}/` the only rule that could
+    reach them would be one on `audio/` — which would also match `audio/{job_id}.mp3`
+    and quietly delete the actual output of every job.
+    """
+    job_id = uuid7()
+
+    segment = segment_audio_key(job_id, 0)
+    final = audio_key(job_id, AudioFormat.MP3)
+
+    assert segment.startswith(f"{SEGMENT_PREFIX}/")
+    assert final.startswith(f"{AUDIO_PREFIX}/")
+    assert not segment.startswith(f"{AUDIO_PREFIX}/")
+
+
+def test_segment_keys_sort_in_playback_order() -> None:
+    """Zero-padded, so a plain listing of the prefix is already in the right order."""
+    job_id = uuid7()
+    keys = [segment_audio_key(job_id, index) for index in (0, 2, 10, 9)]
+
+    assert sorted(keys) == [segment_audio_key(job_id, index) for index in (0, 2, 9, 10)]

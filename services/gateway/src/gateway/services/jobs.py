@@ -38,7 +38,7 @@ from story2audio_shared.schemas import (
     JobTimings,
     SpokenSegment,
 )
-from story2audio_shared.storage import ObjectStorage
+from story2audio_shared.storage import ObjectStorage, segment_audio_key
 
 #: Hourly job-creation window.
 _JOBS_WINDOW_SECONDS = 3600
@@ -252,6 +252,39 @@ def to_response(job: Job, storage: ObjectStorage, *, ttl_seconds: int) -> JobRes
         created_at=job.created_at,
         updated_at=job.updated_at,
     )
+
+
+async def segment_audio_url(
+    session: AsyncSession,
+    *,
+    owner_id: UUID,
+    job_id: UUID,
+    index: int,
+    storage: ObjectStorage,
+    ttl_seconds: int,
+) -> str:
+    """A playable URL for one rendered segment, signed now.
+
+    Segments are published while the job is still running so playback can start before
+    synthesis finishes. The event that announces them carries no URL on purpose: signing
+    in the worker would put its clock and a fixed TTL inside a durable event that may be
+    replayed to a client connecting much later. Signing happens here, on read, where the
+    TTL is measured from the moment someone actually asks (ADR-0003).
+
+    Ownership is checked by loading the job through the same path as every other read, so
+    a segment is exactly as private as the job it belongs to.
+    """
+    job = await get_job(session, owner_id=owner_id, job_id=job_id)
+    if index < 0 or (job.segment_count is not None and index >= job.segment_count):
+        raise AppError(ErrorCode.SEGMENT_NOT_FOUND, detail=f"segment {index} is out of range")
+
+    key = segment_audio_key(job.id, index)
+    if not storage.exists(key):
+        # Normal, not exceptional: the client heard about segment N and asked before the
+        # object settled, or this job predates progressive playback entirely.
+        raise AppError(ErrorCode.SEGMENT_NOT_FOUND, detail=f"segment {index} is not stored")
+
+    return storage.presign_get(key, ttl_seconds=ttl_seconds).url
 
 
 def _spoken_segments(job: Job) -> list[SpokenSegment]:

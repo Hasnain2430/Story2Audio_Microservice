@@ -26,6 +26,7 @@ class ErrorCode(StrEnum):
     PROMPT_EMPTY = "prompt_empty"
     JOB_NOT_FOUND = "job_not_found"
     JOB_NOT_CANCELLABLE = "job_not_cancellable"
+    SEGMENT_NOT_FOUND = "segment_not_found"
     VOICE_NOT_FOUND = "voice_not_found"
     VOICE_FORBIDDEN = "voice_forbidden"
     VOICE_INVALID_AUDIO = "voice_invalid_audio"
@@ -78,6 +79,10 @@ _SPECS: Final[dict[ErrorCode, ErrorSpec]] = {
     ErrorCode.JOB_NOT_CANCELLABLE: ErrorSpec(
         409, "That story has already finished and cannot be cancelled.", False
     ),
+    # Routine rather than exceptional: a client that heard a segment was ready can ask
+    # for it before the object has settled, and a job made before progressive playback
+    # existed has no segments stored at all. Retryable, because waiting usually fixes it.
+    ErrorCode.SEGMENT_NOT_FOUND: ErrorSpec(404, "That part is not ready yet.", True),
     ErrorCode.VOICE_NOT_FOUND: ErrorSpec(404, "That voice could not be found.", False),
     ErrorCode.VOICE_FORBIDDEN: ErrorSpec(403, "That voice is not available to you.", False),
     ErrorCode.VOICE_INVALID_AUDIO: ErrorSpec(

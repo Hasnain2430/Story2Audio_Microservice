@@ -15,6 +15,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Header, Query, Response, WebSocket, WebSocketDisconnect, status
+from fastapi.responses import RedirectResponse
 from redis.asyncio.client import PubSub
 
 from gateway.deps import (
@@ -145,6 +146,41 @@ async def get_job(
     """
     job = await job_service.get_job(session, owner_id=user_id, job_id=job_id)
     return job_service.to_response(job, storage, ttl_seconds=state.presigned_ttl_seconds)
+
+
+@router.get(
+    "/{job_id}/segments/{index}/audio",
+    summary="Play one rendered segment",
+    response_class=RedirectResponse,
+    status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+)
+async def get_segment_audio(
+    job_id: UUID,
+    index: int,
+    user_id: UserIdDep,
+    session: SessionDep,
+    storage: StorageDep,
+    state: StateDep,
+) -> RedirectResponse:
+    """Redirect to a freshly signed URL for one segment of a job.
+
+    This is what makes playback start before the job finishes: the worker publishes each
+    segment as it is rendered, and the client fetches them here by index. A stable URL
+    rather than a signed one in the event, so the link cannot expire between being
+    announced and being used.
+
+    307 rather than 302: the method must be preserved, and browsers and audio elements
+    both follow it to the object store without a second round trip through this service.
+    """
+    url = await job_service.segment_audio_url(
+        session,
+        owner_id=user_id,
+        job_id=job_id,
+        index=index,
+        storage=storage,
+        ttl_seconds=state.presigned_ttl_seconds,
+    )
+    return RedirectResponse(url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
 
 
 @router.delete("/{job_id}", response_model=JobResponse, summary="Cancel a job")
