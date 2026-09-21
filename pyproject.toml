@@ -1,0 +1,84 @@
+[project]
+name = "story2audio"
+version = "2.0.0"
+description = "Async story-to-audio generation pipeline"
+requires-python = ">=3.11,<3.12"
+dependencies = []
+
+[tool.uv]
+package = false
+
+# `services/tts_engine` is deliberately NOT a workspace member. It depends on torch and
+# Coqui TTS, whose pins are strict enough that a joint resolution with the light services
+# is fragile. It carries its own pyproject.toml and its own lockfile, and talks to the
+# rest of the system only over gRPC — so it shares no Python code and needs no shared lock.
+[tool.uv.workspace]
+members = ["packages/shared", "services/gateway", "services/story_worker", "services/tts_worker"]
+
+[tool.uv.sources]
+story2audio-shared = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "ruff>=0.14",
+    "mypy>=1.18",
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=6.0",
+    "types-boto3>=1.35",
+    "pre-commit>=4.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["legacy", "**/*_pb2.py", "**/*_pb2_grpc.py", "**/*_pb2.pyi"]
+
+[tool.ruff.format]
+# Markdown is prose. Ruff would otherwise reformat Python snippets inside fenced
+# blocks in docs/, which breaks deliberate illustrative formatting.
+exclude = ["*.md"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",   # pycodestyle
+    "F",        # pyflakes
+    "I",        # isort
+    "N",        # pep8-naming
+    "UP",       # pyupgrade
+    "B",        # bugbear
+    "A",        # builtins shadowing
+    "C4",       # comprehensions
+    "SIM",      # simplify
+    "TID",      # tidy imports
+    "RUF",      # ruff-specific
+    "ASYNC",    # async correctness
+    "S",        # bandit security
+    "BLE",      # blind except  -- v1 defect 19
+    "T20",      # no print()    -- v1 used print() as its only logging
+]
+ignore = [
+    "S101",  # assert is fine in tests
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unreachable = true
+exclude = ["^legacy/", "_pb2\\.py$", "_pb2_grpc\\.py$"]
+
+[[tool.mypy.overrides]]
+module = ["pydub.*", "celery.*", "soundfile.*", "TTS.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-q --strict-markers"
+markers = [
+    "integration: requires the docker compose stack to be running",
+    "e2e: full browser end-to-end",
+]

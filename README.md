@@ -1,3 +1,15 @@
+> **This README describes v1 and is being replaced.**
+>
+> A full rebuild is underway on the `v2-rebuild` branch: the blocking 10-minute RPC is
+> replaced by a job queue with separate LLM and TTS workers, and Streamlit is replaced by
+> a React + TypeScript frontend. The v1 sources have moved to `legacy/` and still run.
+>
+> Start with [`docs/README.md`](./docs/README.md) — it covers the audit of this system,
+> the target architecture, the phased plan, and the deployment/cost strategy.
+> This file is rewritten in Phase 9.
+
+---
+
 # 🎧 Story2Audio
 
 **Story2Audio** is a multi-modal AI storytelling system that takes a short prompt and generates a complete narrated story with expressive emotional audio. It uses a custom gRPC backend powered by LLaMA3 (via Ollama), XTTS (voice cloning), and Streamlit or REST clients to provide a responsive and flexible frontend experience.
