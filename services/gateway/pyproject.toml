@@ -8,6 +8,10 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
     "asyncpg>=0.30",
+    # The API itself is async, but Alembic is not: migrations are a one-shot deploy
+    # step and run through the sync driver (see alembic/env.py). The gateway owns
+    # every migration (ADR-0001), so it needs both drivers.
+    "psycopg[binary]>=3.2",
     "alembic>=1.14",
     "redis>=5.2",
     "celery[redis]>=5.4",

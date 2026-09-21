@@ -129,6 +129,16 @@ class EngineClient:
                 if code is grpc.StatusCode.FAILED_PRECONDITION:
                     raise _SpeakerCacheMissError from exc
 
+                if _is_message_too_large(exc):
+                    # gRPC overloads RESOURCE_EXHAUSTED: it means both "the server is
+                    # busy" (our own abort) and "this message exceeds the size limit"
+                    # (the transport). Retrying the second one is pure waste -- the
+                    # payload will be exactly as large next time.
+                    raise AppError(
+                        ErrorCode.AUDIO_ASSEMBLY_FAILED,
+                        detail=f"message rejected as too large: {exc.details()}",
+                    ) from exc
+
                 if code is grpc.StatusCode.RESOURCE_EXHAUSTED and attempt < self._capacity_retries:
                     # The GPU is busy, not broken. Backing off and retrying is right;
                     # failing the job would waste the story that is already written.
@@ -195,6 +205,13 @@ class EngineClient:
 
     def close(self) -> None:
         self._channel.close()
+
+
+def _is_message_too_large(exc: grpc.RpcError) -> bool:
+    """Distinguish a transport size rejection from a genuinely busy server."""
+    if exc.code() is not grpc.StatusCode.RESOURCE_EXHAUSTED:
+        return False
+    return "larger than max" in (exc.details() or "")
 
 
 class _SpeakerCacheMissError(Exception):

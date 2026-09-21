@@ -40,11 +40,15 @@ ALLOWED_CONTENT_TYPES: Final[frozenset[str]] = frozenset(
 class ValidatedVoice:
     """A decoded, re-encoded reference sample ready to store."""
 
-    #: Canonical WAV bytes. Whatever came in, this is what gets written.
+    #: Canonical WAV bytes: mono, clipped. Whatever came in, this is what gets written.
     wav_bytes: bytes
+    #: Duration of the *stored* clip, which is what the catalogue reports.
     duration_seconds: float
+    #: Duration of the uploaded file, before clipping.
+    source_duration_seconds: float
     sample_rate: int
-    channels: int
+    #: Channel count of the upload. The stored clip is always mono.
+    source_channels: int
 
 
 def validate_voice_upload(
@@ -53,8 +57,15 @@ def validate_voice_upload(
     min_duration_seconds: float,
     max_duration_seconds: float,
     max_bytes: int,
+    clip_seconds: float = 20.0,
 ) -> ValidatedVoice:
     """Decode, check and canonicalise an uploaded voice sample.
+
+    The stored form is always **mono and clipped**. Voice cloning needs a few seconds of
+    reference, not a few minutes, and the stored clip is what later travels to the TTS
+    engine over gRPC — where a 30-second 48 kHz stereo file is 5.7 MB and exceeds the
+    default 4 MB message limit outright. Clipping at the point of storage is the fix;
+    raising the transport limit would be v1's hack, and v1 needed exactly that hack.
 
     Raises:
         AppError: with a classified :class:`ErrorCode` for every rejection path, so the
@@ -93,16 +104,24 @@ def validate_voice_upload(
             detail=f"{duration_seconds:.2f}s is above the {max_duration_seconds}s maximum",
         )
 
-    # Store one canonical form regardless of what was uploaded, so the TTS engine reads
-    # WAV every time and the storage key's extension never lies about its contents.
+    # Mix to mono. The engine synthesises mono, so a second channel is bytes on the wire
+    # that no part of the pipeline ever uses.
+    mono = frames.mean(axis=1) if frames.shape[1] > 1 else frames[:, 0]
+
+    clipped = mono[: int(clip_seconds * sample_rate)]
+    stored_duration = len(clipped) / sample_rate
+
+    # One canonical form regardless of what was uploaded, so the engine reads WAV every
+    # time and the storage key's extension never lies about its contents.
     buffer = io.BytesIO()
-    sf.write(buffer, frames, sample_rate, format="WAV", subtype="PCM_16")
+    sf.write(buffer, clipped, sample_rate, format="WAV", subtype="PCM_16")
 
     return ValidatedVoice(
         wav_bytes=buffer.getvalue(),
-        duration_seconds=duration_seconds,
+        duration_seconds=stored_duration,
+        source_duration_seconds=duration_seconds,
         sample_rate=sample_rate,
-        channels=channels,
+        source_channels=channels,
     )
 
 

@@ -197,9 +197,9 @@ def snapshot_event(job: Job) -> StatusEvent:
 def to_response(job: Job, storage: ObjectStorage, *, ttl_seconds: int) -> JobResponse:
     """Render a job for the API, presigning any audio it has produced."""
     audio: list[AudioAsset] = []
-    for audio_format, key in (
-        (AudioFormat.MP3, job.audio_key_mp3),
-        (AudioFormat.WAV, job.audio_key_wav),
+    for audio_format, key, size in (
+        (AudioFormat.MP3, job.audio_key_mp3, job.audio_bytes_mp3),
+        (AudioFormat.WAV, job.audio_key_wav, job.audio_bytes_wav),
     ):
         if key is None:
             continue
@@ -209,9 +209,7 @@ def to_response(job: Job, storage: ObjectStorage, *, ttl_seconds: int) -> JobRes
                 format=audio_format,
                 url=presigned.url,
                 duration_seconds=job.audio_duration_seconds or 0.0,
-                # Size is recorded by the TTS worker from Phase 5; until then the field is
-                # present but unknown rather than absent, so the schema stays stable.
-                size_bytes=0,
+                size_bytes=size or 0,
                 expires_at=presigned.expires_at,
             )
         )

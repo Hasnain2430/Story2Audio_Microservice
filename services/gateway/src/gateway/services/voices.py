@@ -66,6 +66,7 @@ async def create_voice(
         min_duration_seconds=limits.min_voice_duration_seconds,
         max_duration_seconds=limits.max_voice_duration_seconds,
         max_bytes=limits.max_voice_upload_bytes,
+        clip_seconds=limits.reference_clip_seconds,
     )
 
     await _assert_name_available(session, owner_id, name)

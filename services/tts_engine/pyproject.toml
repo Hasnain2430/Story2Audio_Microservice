@@ -11,6 +11,8 @@ requires-python = ">=3.11,<3.12"
 dependencies = [
     "grpcio>=1.68",
     "grpcio-health-checking>=1.68",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
     "protobuf>=5.28",
     "numpy>=1.26",
     "soundfile>=0.12",

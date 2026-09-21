@@ -114,8 +114,8 @@ class StubStorage:
 # --- Audio helpers -------------------------------------------------------------------------
 
 
-def make_wav(duration_seconds: float, *, sample_rate: int = 22_050) -> bytes:
-    """A real, decodable mono PCM16 WAV of a given duration.
+def make_wav(duration_seconds: float, *, sample_rate: int = 22_050, channels: int = 1) -> bytes:
+    """A real, decodable PCM16 WAV of a given duration.
 
     Written by hand rather than with soundfile so the fixture cannot be satisfied by the
     same library the code under test uses to decode it.
@@ -124,14 +124,27 @@ def make_wav(duration_seconds: float, *, sample_rate: int = 22_050) -> bytes:
     samples = bytearray()
     for index in range(frame_count):
         value = int(12_000 * math.sin(2 * math.pi * 220 * index / sample_rate))
-        samples += struct.pack("<h", value)
+        for _ in range(channels):
+            samples += struct.pack("<h", value)
 
     data = bytes(samples)
+    block_align = 2 * channels
     header = io.BytesIO()
     header.write(b"RIFF")
     header.write(struct.pack("<I", 36 + len(data)))
     header.write(b"WAVEfmt ")
-    header.write(struct.pack("<IHHIIHH", 16, 1, 1, sample_rate, sample_rate * 2, 2, 16))
+    header.write(
+        struct.pack(
+            "<IHHIIHH",
+            16,
+            1,
+            channels,
+            sample_rate,
+            sample_rate * block_align,
+            block_align,
+            16,
+        )
+    )
     header.write(b"data")
     header.write(struct.pack("<I", len(data)))
     header.write(data)

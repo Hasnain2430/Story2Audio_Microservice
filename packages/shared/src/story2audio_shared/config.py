@@ -86,6 +86,12 @@ class StorageSettings(BaseSettings):
     model_config = _BASE_CONFIG
 
     s3_endpoint_url: str | None = "http://localhost:9000"
+    #: Address to sign URLs against, when it differs from the one used to talk to
+    #: storage. Presigned URLs are handed to a browser, so they must name a host the
+    #: browser can reach: inside docker compose the service connects to `minio:9000`,
+    #: which resolves only on the docker network. Unset means "same as the endpoint",
+    #: which is correct for R2 and for a local process outside compose.
+    s3_public_endpoint_url: str | None = None
     s3_region: str = "auto"
     s3_bucket: str = "story2audio"
     s3_access_key_id: str = "minioadmin"
@@ -115,6 +121,13 @@ class LimitSettings(BaseSettings):
     max_voice_upload_bytes: int = Field(default=10 * 1024 * 1024, ge=1024)
     min_voice_duration_seconds: float = Field(default=6.0, gt=0)
     max_voice_duration_seconds: float = Field(default=120.0, gt=0)
+
+    #: Reference samples are stored mono and clipped to this length. Voice cloning
+    #: needs a few seconds, not a few minutes, and the stored clip is sent to the TTS
+    #: engine over gRPC -- where a 30-second 48 kHz stereo file (5.7 MB) exceeds the
+    #: default 4 MB message limit outright. Clipping is the fix; raising the limit
+    #: would be v1's hack.
+    reference_clip_seconds: float = Field(default=20.0, gt=0, le=60.0)
 
     @field_validator("max_voice_duration_seconds")
     @classmethod

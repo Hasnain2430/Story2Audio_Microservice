@@ -92,6 +92,31 @@ class ObjectStorage:
             ),
         )
 
+        # A second client bound to the browser-reachable address, used only for signing.
+        # The signature covers the host, so a URL signed against the internal endpoint is
+        # not merely unreachable from a browser -- rewriting its host afterwards would
+        # invalidate it.
+        public_endpoint = self._settings.s3_public_endpoint_url
+        self._signing_client: S3Client = (
+            self._client
+            if not public_endpoint or public_endpoint == self._settings.s3_endpoint_url
+            else boto3.client(
+                "s3",
+                endpoint_url=public_endpoint,
+                region_name=self._settings.s3_region,
+                aws_access_key_id=self._settings.s3_access_key_id,
+                aws_secret_access_key=self._settings.s3_secret_access_key.get_secret_value(),
+                config=Config(
+                    signature_version="s3v4",
+                    s3={
+                        "addressing_style": (
+                            "path" if self._settings.s3_force_path_style else "virtual"
+                        )
+                    },
+                ),
+            )
+        )
+
     @property
     def bucket(self) -> str:
         return self._settings.s3_bucket
@@ -140,7 +165,7 @@ class ObjectStorage:
         """
         ttl = ttl_seconds if ttl_seconds is not None else self._settings.presigned_url_ttl_seconds
         try:
-            url = self._client.generate_presigned_url(
+            url = self._signing_client.generate_presigned_url(
                 "get_object",
                 Params={"Bucket": self.bucket, "Key": key},
                 ExpiresIn=ttl,

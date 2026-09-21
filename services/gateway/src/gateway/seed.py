@@ -93,6 +93,9 @@ async def seed_builtin_voices() -> int:
                         min_duration_seconds=0.5,
                         max_duration_seconds=max(limits.max_voice_duration_seconds, 600.0),
                         max_bytes=100 * 1024 * 1024,
+                        # Clipped like any upload. The v1 reference pack is 30-second
+                        # 48 kHz files, which are far larger than cloning needs.
+                        clip_seconds=limits.reference_clip_seconds,
                     )
                 except AppError as exc:
                     log.warning("builtin_voice_rejected", name=name, reason=exc.code.value)

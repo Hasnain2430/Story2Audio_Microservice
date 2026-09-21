@@ -184,7 +184,7 @@ async def test_progress_streams_over_the_websocket(client: httpx.AsyncClient) ->
 
     types = [frame["type"] for frame in frames]
     assert types[0] == "status"
-    assert "token" in types
+    assert frames[0]["snapshot"] is True
     assert "progress" in types
     assert types[-1] in TERMINAL
 
@@ -194,6 +194,16 @@ async def test_progress_streams_over_the_websocket(client: httpx.AsyncClient) ->
     # Sequence numbers are monotonic, so a gap would be detectable (ADR-0003).
     live = [frame["seq"] for frame in frames if not frame.get("snapshot")]
     assert live == sorted(live)
+
+    # Token frames are deliberately NOT asserted here. Whether a client sees them
+    # depends on winning a race against the writing stage, and with LLM_PROVIDER=fake
+    # that stage finishes in tens of milliseconds. Missing them costs nothing by design:
+    # the snapshot conveys state and `GET /v1/jobs/{id}` is authoritative for the text
+    # (ADR-0003), which is exactly what makes the client's polling fallback safe.
+    #
+    # Token publication itself is covered deterministically, without a race, by
+    # `tests/unit/test_story_pipeline.py::
+    #  test_the_stage_publishes_a_writing_status_then_tokens_then_story_done`.
 
 
 async def test_a_job_survives_the_client_disconnecting(client: httpx.AsyncClient) -> None:

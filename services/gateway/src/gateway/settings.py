@@ -8,9 +8,10 @@ from __future__ import annotations
 
 from enum import StrEnum
 from functools import lru_cache
+from typing import Annotated
 
 from pydantic import Field, SecretStr, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class JobDispatch(StrEnum):
@@ -42,7 +43,13 @@ class GatewaySettings(BaseSettings):
     #: Exact origins allowed to call the API with credentials. Never "*": the API
     #: authenticates with a cookie, and the browser refuses wildcard-with-credentials
     #: anyway. Comma-separated in the environment.
-    cors_allow_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
+    #:
+    #: `NoDecode` is required. Without it pydantic-settings tries to JSON-decode any
+    #: complex type straight from the environment variable, which fails outright on
+    #: `a,b` before the validator below ever runs.
+    cors_allow_origins: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["http://localhost:5173"]
+    )
 
     public_web_origin: str = "http://localhost:5173"
 

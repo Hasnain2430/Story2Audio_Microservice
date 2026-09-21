@@ -30,6 +30,20 @@ log = get_logger(__name__)
 
 _SERVICE_NAME = "story2audio.tts.v1.TtsEngine"
 
+#: Channel options for the server.
+#:
+#: Deliberately contains no `grpc.max_*_message_length` entry. v1 raised both ends to
+#: 100 MB because it shipped whole rendered WAVs in a single field; here audio streams
+#: in bounded chunks and reference samples are clipped at upload, so the defaults are
+#: correct and a raised limit would only hide a payload that had grown too large.
+SERVER_OPTIONS: tuple[tuple[str, int], ...] = (
+    # Keepalives so a half-open connection to a scale-to-zero GPU host is detected
+    # rather than hanging a worker for the full request timeout.
+    ("grpc.keepalive_time_ms", 30_000),
+    ("grpc.keepalive_timeout_ms", 10_000),
+    ("grpc.keepalive_permit_without_calls", 1),
+)
+
 _FORMAT_TO_PROTO = {
     SampleFormat.PCM_S16LE: tts_pb2.SAMPLE_FORMAT_PCM_S16LE,
     SampleFormat.PCM_F32LE: tts_pb2.SAMPLE_FORMAT_PCM_F32LE,
@@ -281,13 +295,7 @@ def create_server(
         futures.ThreadPoolExecutor(
             max_workers=settings.grpc_max_workers, thread_name_prefix="tts-engine"
         ),
-        options=[
-            # Keepalives so a half-open connection to a scale-to-zero GPU host is
-            # detected rather than hanging a worker for the full request timeout.
-            ("grpc.keepalive_time_ms", 30_000),
-            ("grpc.keepalive_timeout_ms", 10_000),
-            ("grpc.keepalive_permit_without_calls", 1),
-        ],
+        options=SERVER_OPTIONS,
     )
 
     servicer = TtsEngineServicer(backend, settings)

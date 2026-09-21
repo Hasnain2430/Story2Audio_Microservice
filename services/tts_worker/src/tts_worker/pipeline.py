@@ -345,8 +345,8 @@ def _finish(
     segments: int,
 ) -> None:
     """Mark the job done and announce it."""
-    mp3_key, _ = assets[AudioFormat.MP3]
-    wav_key, _ = assets[AudioFormat.WAV]
+    mp3_key, mp3_bytes = assets[AudioFormat.MP3]
+    wav_key, wav_bytes = assets[AudioFormat.WAV]
 
     result = advance_status(
         session,
@@ -355,6 +355,8 @@ def _finish(
         target=JobStatus.DONE,
         audio_key_mp3=mp3_key,
         audio_key_wav=wav_key,
+        audio_bytes_mp3=mp3_bytes,
+        audio_bytes_wav=wav_bytes,
         audio_duration_seconds=mixed.duration_seconds,
         segments_done=segments,
         finished_at=datetime.now(UTC),

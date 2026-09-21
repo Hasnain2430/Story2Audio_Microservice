@@ -28,6 +28,8 @@ x-app-env: &app-env
   CELERY_BROKER_URL: redis://redis:6379/1
   CELERY_RESULT_BACKEND: redis://redis:6379/2
   S3_ENDPOINT_URL: http://minio:9000
+  # Signed URLs are played by a browser on the host, where `minio` does not resolve.
+  S3_PUBLIC_ENDPOINT_URL: http://localhost:9000
   S3_BUCKET: story2audio
   S3_ACCESS_KEY_ID: minioadmin
   S3_SECRET_ACCESS_KEY: minioadmin
@@ -66,7 +68,11 @@ services:
       retries: 20
 
   minio:
-    image: minio/minio:latest
+    # quay.io, not Docker Hub: MinIO stopped publishing a `latest` tag there and the
+    # pull now fails with "repository does not exist or may require 'docker login'".
+    # Pinned to a release rather than `latest` so a rebuild months from now brings up
+    # the same stack.
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
       MINIO_ROOT_USER: minioadmin

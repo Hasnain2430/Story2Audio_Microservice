@@ -194,6 +194,10 @@ class Job(Base, TimestampMixin):
     # --- TTS stage output ---------------------------------------------------------------
     audio_key_mp3: Mapped[str | None] = mapped_column(String(512), nullable=True)
     audio_key_wav: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    #: Encoded sizes, recorded at upload. Persisted rather than fetched with a HEAD
+    #: per asset per response: the API returns these on every job read.
+    audio_bytes_mp3: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    audio_bytes_wav: Mapped[int | None] = mapped_column(Integer, nullable=True)
     audio_duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
     segment_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     segments_done: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

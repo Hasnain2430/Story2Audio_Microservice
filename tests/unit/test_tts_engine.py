@@ -21,7 +21,7 @@ import pytest
 
 from tts_engine.cache import SpeakerCache
 from tts_engine.pb import tts_pb2, tts_pb2_grpc
-from tts_engine.server import InferenceSlots, TtsEngineServicer, create_server
+from tts_engine.server import SERVER_OPTIONS, InferenceSlots, TtsEngineServicer
 from tts_engine.settings import Backend, TtsEngineSettings
 from tts_engine.synthesis import build_backend
 from tts_engine.synthesis.base import SpeakerEmbedding, SynthesisError
@@ -446,11 +446,16 @@ def test_requests_are_refused_while_the_model_is_loading(
 # --- Server construction -------------------------------------------------------------------------
 
 
-def test_the_server_sets_no_message_size_overrides(settings: TtsEngineSettings) -> None:
-    """The 100 MB limits v1 needed are exactly what streaming removes."""
-    backend = build_backend(settings)
-    server, _ = create_server(backend, settings)
-    server.stop(0).wait()
+def test_the_server_sets_no_message_size_overrides() -> None:
+    """The 100 MB limits v1 needed are exactly what streaming removes.
+
+    Asserted on the options rather than by starting a server: binding the configured
+    port would make this test fail whenever the real stack happens to be running.
+    """
+    keys = {key for key, _ in SERVER_OPTIONS}
+
+    assert not any("message_length" in key for key in keys)
+    assert "grpc.keepalive_time_ms" in keys
 
 
 def test_the_stub_backend_is_refused_in_production() -> None:

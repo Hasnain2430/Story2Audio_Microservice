@@ -124,6 +124,41 @@ async def test_uploads_are_stored_as_canonical_wav(
     assert storage.content_types[key] == "audio/wav"
 
 
+async def test_long_uploads_are_clipped_for_storage(
+    client: AsyncClient, storage: StubStorage
+) -> None:
+    """The stored clip travels to the TTS engine over gRPC.
+
+    A 30-second 48 kHz stereo file is 5.7 MB and exceeds gRPC's 4 MB default message
+    limit outright — which is exactly how this surfaced, as a RESOURCE_EXHAUSTED from
+    the transport. Clipping at upload is the fix; raising the limit would be v1's hack.
+    """
+    response = await client.post(
+        "/v1/voices", data={"name": "Long"}, files=upload_files(make_wav(90.0))
+    )
+
+    assert response.status_code == 201
+    # Reported duration is the stored clip, not the upload.
+    assert response.json()["duration_seconds"] <= 21.0
+
+    stored = storage.objects[f"voices/{response.json()['id']}.wav"]
+    assert len(stored) < 4 * 1024 * 1024
+
+
+async def test_uploads_are_stored_as_mono(client: AsyncClient, storage: StubStorage) -> None:
+    """The engine synthesises mono, so a second channel is bytes nothing ever uses."""
+    import wave
+
+    response = await client.post(
+        "/v1/voices", data={"name": "Stereo"}, files=upload_files(make_wav(8.0, channels=2))
+    )
+    assert response.status_code == 201
+
+    stored = storage.objects[f"voices/{response.json()['id']}.wav"]
+    with wave.open(io.BytesIO(stored), "rb") as handle:
+        assert handle.getnchannels() == 1
+
+
 async def test_stored_key_is_derived_from_the_id_not_the_name(
     client: AsyncClient, storage: StubStorage
 ) -> None:
