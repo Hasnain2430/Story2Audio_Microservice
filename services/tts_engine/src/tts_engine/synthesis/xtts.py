@@ -178,7 +178,12 @@ class XttsBackend:
                     gpt_cond_latent,
                     speaker_embedding,
                     speed=speed,
-                    enable_text_splitting=True,
+                    # The worker has already split the story into sentence-bounded
+                    # segments of a few hundred characters -- that split is what the
+                    # progress meter counts. Splitting again here would fragment the
+                    # audio a second time, and Coqui's splitter pulls in Spacy as a
+                    # dependency the engine otherwise does not need.
+                    enable_text_splitting=False,
                 )
                 for tensor in stream:
                     yield from self._to_pcm_chunks(tensor)

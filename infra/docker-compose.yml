@@ -197,7 +197,14 @@ services:
         PACKAGE: story2audio-tts-worker
     environment:
       <<: *app-env
-      TTS_ENGINE_ADDRESS: tts-engine:50051
+      # Defaults to the containerised engine. Point it at the host to use an engine you
+      # are running natively -- which is how you get real XTTS on a Windows machine
+      # without GPU passthrough through WSL2:
+      #
+      #   docker compose -f infra/docker-compose.yml stop tts-engine
+      #   TTS_ENGINE_ADDRESS=host.docker.internal:50051 docker compose ... up -d tts-worker
+      #   make tts-engine-native
+      TTS_ENGINE_ADDRESS: ${TTS_ENGINE_ADDRESS:-tts-engine:50051}
     command:
       - celery
       - -A
@@ -208,6 +215,9 @@ services:
       # excess demand rather than queueing it invisibly.
       - --concurrency=1
       - --loglevel=info
+    extra_hosts:
+      # Lets TTS_ENGINE_ADDRESS point at an engine running on the host.
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy
@@ -215,8 +225,6 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
-      tts-engine:
-        condition: service_started
       migrate:
         condition: service_completed_successfully
 

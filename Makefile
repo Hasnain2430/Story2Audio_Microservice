@@ -44,6 +44,14 @@ web-build: ## Production build of the frontend
 tts-engine: ## Run the TTS engine (stub backend unless TTS_BACKEND=xtts)
 	uv run --project services/tts_engine python -m tts_engine
 
+tts-engine-native: ## Run real XTTS from the GPU venv, for the compose stack to call
+	@echo "Point the worker at this first:"
+	@echo "  docker compose -f infra/docker-compose.yml stop tts-engine"
+	@echo "  TTS_ENGINE_ADDRESS=host.docker.internal:50051 \\"
+	@echo "    docker compose --env-file .env -f infra/docker-compose.yml up -d tts-worker"
+	COQUI_TOS_AGREED=1 TTS_BACKEND=xtts TTS_ENGINE_HOST=0.0.0.0 \
+		.venv-tts-gpu/Scripts/python.exe -m tts_engine
+
 worker-tts: ## Run the TTS worker against the local broker
 	uv run --package story2audio-tts-worker celery -A tts_worker.app:celery_app worker \n		--queues tts --concurrency 1 --loglevel info
 
