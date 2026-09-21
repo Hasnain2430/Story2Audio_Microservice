@@ -8,6 +8,7 @@ Working documents for the v2 rebuild. Branch: `v2-rebuild`.
 | [02 — Target Architecture](./02-target-architecture.md) | v2 service map, why each boundary exists, job lifecycle, API surface, data model, frontend architecture |
 | [03 — Implementation Plan](./03-implementation-plan.md) | Ten phases, each ending in a runnable state; sequencing, definition of done, risks |
 | [04 — Deployment and Cost](./04-deployment-and-cost.md) | Two deployment shapes, the TTS/GPU cost decision, per-story cost model, spend guardrails |
+| [05 — Roadmap](./05-roadmap.md) | What comes after Phase 6, measured against a real run: progressive playback, parallel synthesis, resume and caching, and what shipping publicly actually requires |
 | [ADRs](./adr/) | One record per non-obvious decision: what was chosen, what was rejected, and what it costs |
 
 ## The short version
