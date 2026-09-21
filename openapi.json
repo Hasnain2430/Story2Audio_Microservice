@@ -302,6 +302,13 @@
             ],
             "title": "Segment Count"
           },
+          "segments": {
+            "items": {
+              "$ref": "#/components/schemas/SpokenSegment"
+            },
+            "title": "Segments",
+            "type": "array"
+          },
           "speed": {
             "title": "Speed",
             "type": "number"
@@ -509,6 +516,59 @@
           "items"
         ],
         "title": "Page[VoiceResponse]",
+        "type": "object"
+      },
+      "SegmentKind": {
+        "description": "Whether a slice of the story is narration or a character's spoken line.",
+        "enum": [
+          "narration",
+          "dialogue"
+        ],
+        "title": "SegmentKind",
+        "type": "string"
+      },
+      "SpokenSegment": {
+        "additionalProperties": false,
+        "description": "One spoken segment, placed in the audio and in the story.\n\nTwo coordinate systems, because they are not the same text. ``start_seconds`` and\n``end_seconds`` are the segment's position in the rendered track, measured by the\nworker that assembled it. ``start_char`` and ``end_char`` are its span in\n``story_text`` \u2014 needed separately because the spoken form has been cleaned\n(quotes stripped, whitespace collapsed) and so cannot be located by searching.\n\nTogether they are what a player needs to highlight the story as it is read.",
+        "properties": {
+          "end_char": {
+            "title": "End Char",
+            "type": "integer"
+          },
+          "end_seconds": {
+            "title": "End Seconds",
+            "type": "number"
+          },
+          "index": {
+            "title": "Index",
+            "type": "integer"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/SegmentKind"
+          },
+          "start_char": {
+            "title": "Start Char",
+            "type": "integer"
+          },
+          "start_seconds": {
+            "title": "Start Seconds",
+            "type": "number"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "index",
+          "kind",
+          "text",
+          "start_char",
+          "end_char",
+          "start_seconds",
+          "end_seconds"
+        ],
+        "title": "SpokenSegment",
         "type": "object"
       },
       "StoryLength": {

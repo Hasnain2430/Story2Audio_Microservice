@@ -17,6 +17,14 @@ narrator's voice.
 
 **Empty fragments are dropped early**, rather than producing a zero-length synthesis
 request the engine would reject.
+
+**Every segment keeps its span in the original story.** The text that is spoken is not
+the text that was written -- quotes are stripped, asterisks removed, whitespace
+collapsed -- so a segment cannot be found again by searching for it. Carrying
+``start_char`` and ``end_char`` is what lets the player highlight the story as it is
+read: the timeline is built from segment durations, and the span says which characters
+that covers. Without them the UI would have to display the spoken text instead of the
+written story, which is a subtly different document.
 """
 
 from __future__ import annotations
@@ -40,10 +48,15 @@ _SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?…।؟！？。])\s+")
 
 @dataclass(frozen=True, slots=True)
 class Segment:
-    """One unit of synthesis."""
+    """One unit of synthesis, and where it came from."""
 
     kind: SegmentKind
+    #: Cleaned text, which is what is actually spoken.
     text: str
+    #: Half-open span of the *original* story this segment was taken from. Spoken text
+    #: differs from written text, so this is the only reliable way back to it.
+    start_char: int
+    end_char: int
 
     @property
     def is_dialogue(self) -> bool:
@@ -77,58 +90,105 @@ def split_story(story: str, *, max_segment_chars: int = DEFAULT_MAX_SEGMENT_CHAR
     cursor = 0
 
     for match in _QUOTE_PATTERN.finditer(story):
-        narration = story[cursor : match.start()]
-        segments.extend(_narration_segments(narration, max_segment_chars))
+        segments.extend(
+            _chunk(story[cursor : match.start()], max_segment_chars, SegmentKind.NARRATION, cursor)
+        )
 
-        # Exactly one of the two alternation groups matched.
-        spoken = match.group(1) if match.group(1) is not None else match.group(2)
-        segments.extend(_dialogue_segments(spoken or "", max_segment_chars))
+        # Exactly one of the two alternation groups matched. The span taken is the
+        # group's, not the match's, so the quotation marks stay outside the highlight.
+        group = 1 if match.group(1) is not None else 2
+        segments.extend(
+            _chunk(
+                match.group(group) or "",
+                max_segment_chars,
+                SegmentKind.DIALOGUE,
+                match.start(group),
+            )
+        )
 
         cursor = match.end()
 
-    segments.extend(_narration_segments(story[cursor:], max_segment_chars))
+    segments.extend(_chunk(story[cursor:], max_segment_chars, SegmentKind.NARRATION, cursor))
     return segments
 
 
-def _narration_segments(text: str, max_chars: int) -> list[Segment]:
-    return [Segment(kind=SegmentKind.NARRATION, text=chunk) for chunk in _chunk(text, max_chars)]
+@dataclass(frozen=True, slots=True)
+class _Sentence:
+    """One sentence, cleaned for speech, still carrying where it was written."""
+
+    text: str
+    start: int
+    end: int
 
 
-def _dialogue_segments(text: str, max_chars: int) -> list[Segment]:
-    return [Segment(kind=SegmentKind.DIALOGUE, text=chunk) for chunk in _chunk(text, max_chars)]
-
-
-def _chunk(text: str, max_chars: int) -> list[str]:
-    """Group sentences into chunks of at most ``max_chars``.
+def _chunk(text: str, max_chars: int, kind: SegmentKind, base: int) -> list[Segment]:
+    """Group sentences into segments of at most ``max_chars``.
 
     Splits on sentence boundaries rather than mid-word, so a segment break lands where a
     reader would pause anyway. A single sentence longer than the limit is kept whole: a
     hard cut inside a clause is worse than one long segment, and the engine splits
     further internally.
-    """
-    cleaned = clean_segment_text(text)
-    if not cleaned:
-        return []
 
-    sentences = [part for part in _SENTENCE_BOUNDARY.split(cleaned) if part.strip()]
+    Sentences are cut from the *raw* text and cleaned one at a time, rather than cleaning
+    the whole fragment and splitting the result. Same spoken output, but the offsets
+    survive it: cleaning is not length-preserving, so doing it first would make every
+    position afterwards a guess.
+    """
+    sentences = _sentences(text, base)
     if not sentences:
         return []
 
-    chunks: list[str] = []
-    current: list[str] = []
+    segments: list[Segment] = []
+    current: list[_Sentence] = []
     length = 0
 
     for sentence in sentences:
-        addition = len(sentence) + (1 if current else 0)
+        addition = len(sentence.text) + (1 if current else 0)
         if current and length + addition > max_chars:
-            chunks.append(" ".join(current))
+            segments.append(_join(current, kind))
             current = [sentence]
-            length = len(sentence)
+            length = len(sentence.text)
         else:
             current.append(sentence)
             length += addition
 
     if current:
-        chunks.append(" ".join(current))
+        segments.append(_join(current, kind))
 
-    return [chunk for chunk in chunks if chunk.strip()]
+    return segments
+
+
+def _sentences(text: str, base: int) -> list[_Sentence]:
+    """Cut ``text`` at sentence boundaries, keeping absolute offsets.
+
+    Spans are tightened past surrounding whitespace, so a highlight starts on a letter
+    rather than on the space in front of it.
+    """
+    spans: list[tuple[int, int]] = []
+    start = 0
+    for boundary in _SENTENCE_BOUNDARY.finditer(text):
+        spans.append((start, boundary.start()))
+        start = boundary.end()
+    spans.append((start, len(text)))
+
+    sentences: list[_Sentence] = []
+    for begin, finish in spans:
+        raw = text[begin:finish]
+        cleaned = clean_segment_text(raw)
+        if not cleaned:
+            continue
+        lead = len(raw) - len(raw.lstrip())
+        trail = len(raw) - len(raw.rstrip())
+        sentences.append(
+            _Sentence(text=cleaned, start=base + begin + lead, end=base + finish - trail)
+        )
+    return sentences
+
+
+def _join(sentences: list[_Sentence], kind: SegmentKind) -> Segment:
+    return Segment(
+        kind=kind,
+        text=" ".join(sentence.text for sentence in sentences),
+        start_char=sentences[0].start,
+        end_char=sentences[-1].end,
+    )

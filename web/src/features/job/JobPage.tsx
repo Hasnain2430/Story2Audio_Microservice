@@ -9,6 +9,11 @@
  * The transport indicator is deliberately visible. When the WebSocket drops and polling
  * takes over, the page says so and keeps working — a fallback nobody can see is a
  * fallback nobody tests.
+ *
+ * Once the audio exists, the story becomes a read-along: the player and the transcript
+ * share one clock (`usePlayback`), so the line being spoken is lit and any word can be
+ * clicked to seek. That is the point of the segment timeline the worker records — it
+ * turns a seven minute file into something you can navigate by reading.
  */
 
 import { useParams } from 'react-router'
@@ -18,10 +23,12 @@ import { isTerminal, type Job } from '@/api/types'
 import { useCancelJob } from '@/hooks/useCancelJob'
 import { useJob } from '@/hooks/useJob'
 import { useJobEvents, type Transport } from '@/hooks/useJobEvents'
+import { usePlayback } from '@/hooks/usePlayback'
 import { formatElapsed, secondsBetween, STATUS_ACTIVITY } from '@/lib/format'
 import { AudioPlayer } from '@/components/AudioPlayer'
 import { Banner, Button, Card, SegmentMeter, StatusLight } from '@/components/primitives'
 import { Pipeline } from '@/features/job/Pipeline'
+import { Transcript } from '@/features/job/Transcript'
 import '@/features/job/JobPage.css'
 
 export function JobPage() {
@@ -30,6 +37,10 @@ export function JobPage() {
   const data = job.data
   const live = useJobEvents(jobId, data !== undefined && !isTerminal(data.status))
   const cancel = useCancelJob(jobId ?? '')
+
+  // Declared before the early returns: hooks cannot be called conditionally, and the
+  // player is inert until an element is attached to it anyway.
+  const playback = usePlayback(data?.audio?.[0]?.duration_seconds ?? 0)
 
   if (job.isLoading) {
     return <div className="job__loading">Tuning in…</div>
@@ -49,6 +60,9 @@ export function JobPage() {
   const story = data.story_text ?? live.streamedText
   const segmentsTotal = live.segmentsTotal || (data.segment_count ?? 0)
   const audio = data.audio ?? []
+  // Absent for a job that is still running, and for any job finished before the timeline
+  // was recorded. The transcript renders plain prose in that case.
+  const segments = data.segments ?? []
 
   return (
     <article className="job">
@@ -102,22 +116,27 @@ export function JobPage() {
       )}
 
       {audio.length > 0 && (
-        <div className="rise" style={{ '--i': 2 } as React.CSSProperties}>
-          <AudioPlayer assets={audio} fallbackDuration={audio[0]?.duration_seconds} />
+        <div className="job__player rise" style={{ '--i': 2 } as React.CSSProperties}>
+          <AudioPlayer assets={audio} playback={playback} />
         </div>
       )}
 
       {story && (
         <section className="story rise" style={{ '--i': 3 } as React.CSSProperties}>
-          <h2 className="visually-hidden">Story</h2>
-          <div className="story__body">
-            {story.split(/\n{2,}/).map((paragraph, index) => (
-              <p key={index}>{paragraph}</p>
-            ))}
-            {/* A blinking cursor while text is still arriving: the one place a caret
-                genuinely means something is being written. */}
-            {data.status === 'writing' && <span className="story__caret" aria-hidden="true" />}
+          <div className="story__head">
+            <h2 className="eyebrow">Story</h2>
+            {segments.length > 0 && (
+              <span className="story__hint">Click any word to jump there</span>
+            )}
           </div>
+          <Transcript
+            story={story}
+            segments={segments}
+            currentTime={playback.currentTime}
+            playing={playback.playing}
+            onSeek={playback.seek}
+            writing={data.status === 'writing'}
+          />
         </section>
       )}
 

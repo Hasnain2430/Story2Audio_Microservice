@@ -1,0 +1,98 @@
+/*
+ * Read-along typography.
+ *
+ * The page is prose first: at rest this must look like a printed story, not like a
+ * karaoke screen. So unspoken text carries full contrast and the highlight works by
+ * *warmth* rather than by a coloured block — the line being read is lit, the rest of the
+ * page is simply not lit.
+ *
+ * Everything that animates is `color`, `background-color` and `opacity` on inline spans.
+ * There is no layout animation anywhere in here, because a word changing width would
+ * reflow the paragraph on every frame.
+ */
+
+.transcript {
+  font-family: var(--font-prose);
+  font-size: var(--text-lg);
+  line-height: var(--leading-prose);
+  font-variation-settings: "SOFT" 0, "WONK" 0, "opsz" 14;
+  color: var(--text);
+  max-width: var(--measure);
+}
+
+.transcript__p + .transcript__p {
+  margin-top: var(--space-4);
+  text-indent: 1.4em;
+}
+
+/* This is prose, and it should announce itself as prose. */
+.transcript__p:first-child::first-letter {
+  float: left;
+  font-size: 3.1em;
+  line-height: 0.82;
+  padding: 0.08em 0.09em 0 0;
+  color: var(--accent);
+  font-variation-settings: "SOFT" 0, "WONK" 1, "opsz" 72;
+}
+
+.w {
+  /* Words must not be inline-block: that would break justification and let a highlighted
+     word change the line it sits on. */
+  transition: color var(--duration-fast) linear;
+}
+
+/*
+ * Only once there is a timeline does anything dim. Without one the story renders at full
+ * contrast and none of the rules below apply — the read-along is additive.
+ */
+.transcript--timed .w--timed {
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 2px;
+}
+
+.transcript--timed .w--timed:hover {
+  color: var(--text);
+}
+
+.transcript--timed .w--timed:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* Already read: legible, settled, out of the way. */
+.transcript--timed .w--timed.is-spoken {
+  color: var(--text);
+}
+
+/* The line currently being read lifts as a whole, so the eye can find it at a glance. */
+.transcript--timed .w--timed.is-current-line {
+  color: var(--text);
+  background-color: rgb(240 138 60 / 7%);
+  box-shadow: 0 0 0 1px rgb(240 138 60 / 5%);
+}
+
+/* The word being spoken right now. */
+.transcript--timed .w--timed.is-speaking {
+  color: var(--accent-bright);
+  background-color: rgb(240 138 60 / 16%);
+  text-shadow: 0 0 18px rgb(240 138 60 / 35%);
+}
+
+.transcript__caret {
+  display: inline-block;
+  width: 0.5em;
+  height: 1.05em;
+  margin-left: 0.08em;
+  vertical-align: text-bottom;
+  background: var(--accent);
+  animation: caret 1.05s step-end infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .w,
+  .transcript__caret {
+    transition: none;
+    animation: none;
+  }
+}

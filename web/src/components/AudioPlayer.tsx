@@ -8,11 +8,16 @@
  *
  * The waveform is drawn from the decoded MP3 once, then cached: it is a real picture of
  * the audio, not a decorative squiggle.
+ *
+ * Playback state lives in `usePlayback`, one level up, because the transcript highlights
+ * words in time with this element and the two must not keep separate clocks. The player
+ * owns the *element*; the hook owns *where playback is*.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 
 import type { AudioAsset } from '@/api/types'
+import type { Playback } from '@/hooks/usePlayback'
 import { formatBytes, formatDuration } from '@/lib/format'
 import { Button } from '@/components/primitives'
 import '@/components/AudioPlayer.css'
@@ -21,19 +26,14 @@ const BUCKETS = 220
 
 interface AudioPlayerProps {
   assets: AudioAsset[]
-  /** Shown while the waveform is still being computed. */
-  fallbackDuration?: number | undefined
+  playback: Playback
 }
 
-export function AudioPlayer({ assets, fallbackDuration }: AudioPlayerProps) {
+export function AudioPlayer({ assets, playback }: AudioPlayerProps) {
   const playable = assets.find((a) => a.format === 'mp3') ?? assets[0]
 
-  const audioRef = useRef<HTMLAudioElement | null>(null)
-  const [playing, setPlaying] = useState(false)
-  const [current, setCurrent] = useState(0)
-  const [duration, setDuration] = useState(fallbackDuration ?? 0)
+  const { ref: audioRef, playing, currentTime: current, duration, rate, toggle, setRate } = playback
   const [peaks, setPeaks] = useState<number[] | null>(null)
-  const [rate, setRate] = useState(1)
 
   // --- Waveform ------------------------------------------------------------------------
 
@@ -79,20 +79,12 @@ export function AudioPlayer({ assets, fallbackDuration }: AudioPlayerProps) {
 
   // --- Transport ------------------------------------------------------------------------
 
-  const toggle = useCallback(() => {
-    const el = audioRef.current
-    if (!el) return
-    if (el.paused) void el.play()
-    else el.pause()
-  }, [])
-
   const seekTo = useCallback(
     (fraction: number) => {
-      const el = audioRef.current
-      if (!el || !duration) return
-      el.currentTime = Math.max(0, Math.min(duration, fraction * duration))
+      if (!duration) return
+      playback.seek(fraction * duration)
     },
-    [duration],
+    [duration, playback],
   )
 
   const onScrub = useCallback(
@@ -103,12 +95,6 @@ export function AudioPlayer({ assets, fallbackDuration }: AudioPlayerProps) {
     [seekTo],
   )
 
-  useEffect(() => {
-    const el = audioRef.current
-    if (!el) return
-    el.playbackRate = rate
-  }, [rate])
-
   if (!playable) return null
 
   const download = assets.find((a) => a.format === 'wav') ?? playable
@@ -116,19 +102,7 @@ export function AudioPlayer({ assets, fallbackDuration }: AudioPlayerProps) {
 
   return (
     <div className="player">
-      <audio
-        ref={audioRef}
-        src={playable.url}
-        preload="metadata"
-        onPlay={() => setPlaying(true)}
-        onPause={() => setPlaying(false)}
-        onEnded={() => setPlaying(false)}
-        onTimeUpdate={(e) => setCurrent(e.currentTarget.currentTime)}
-        onLoadedMetadata={(e) => {
-          const value = e.currentTarget.duration
-          if (Number.isFinite(value)) setDuration(value)
-        }}
-      />
+      <audio ref={audioRef} src={playable.url} preload="metadata" {...playback.handlers} />
 
       <Button
         variant="primary"

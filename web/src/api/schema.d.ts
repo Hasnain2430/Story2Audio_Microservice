@@ -303,6 +303,8 @@ export interface components {
             prompt: string;
             /** Segment Count */
             segment_count?: number | null;
+            /** Segments */
+            segments?: components["schemas"]["SpokenSegment"][];
             /** Speed */
             speed: number;
             status: components["schemas"]["JobStatus"];
@@ -385,6 +387,39 @@ export interface components {
             items: components["schemas"]["VoiceResponse"][];
             /** Next Cursor */
             next_cursor?: string | null;
+        };
+        /**
+         * SegmentKind
+         * @description Whether a slice of the story is narration or a character's spoken line.
+         * @enum {string}
+         */
+        SegmentKind: "narration" | "dialogue";
+        /**
+         * SpokenSegment
+         * @description One spoken segment, placed in the audio and in the story.
+         *
+         *     Two coordinate systems, because they are not the same text. ``start_seconds`` and
+         *     ``end_seconds`` are the segment's position in the rendered track, measured by the
+         *     worker that assembled it. ``start_char`` and ``end_char`` are its span in
+         *     ``story_text`` — needed separately because the spoken form has been cleaned
+         *     (quotes stripped, whitespace collapsed) and so cannot be located by searching.
+         *
+         *     Together they are what a player needs to highlight the story as it is read.
+         */
+        SpokenSegment: {
+            /** End Char */
+            end_char: number;
+            /** End Seconds */
+            end_seconds: number;
+            /** Index */
+            index: number;
+            kind: components["schemas"]["SegmentKind"];
+            /** Start Char */
+            start_char: number;
+            /** Start Seconds */
+            start_seconds: number;
+            /** Text */
+            text: string;
         };
         /**
          * StoryLength

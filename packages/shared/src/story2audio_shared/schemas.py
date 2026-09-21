@@ -18,6 +18,7 @@ from story2audio_shared.enums import (
     Emotion,
     JobStatus,
     Language,
+    SegmentKind,
     StoryLength,
     VoiceMode,
 )
@@ -153,6 +154,28 @@ class AudioAsset(ApiModel):
     expires_at: datetime
 
 
+class SpokenSegment(ApiModel):
+    """One spoken segment, placed in the audio and in the story.
+
+    Two coordinate systems, because they are not the same text. ``start_seconds`` and
+    ``end_seconds`` are the segment's position in the rendered track, measured by the
+    worker that assembled it. ``start_char`` and ``end_char`` are its span in
+    ``story_text`` — needed separately because the spoken form has been cleaned
+    (quotes stripped, whitespace collapsed) and so cannot be located by searching.
+
+    Together they are what a player needs to highlight the story as it is read.
+    """
+
+    index: int
+    kind: SegmentKind
+    #: The cleaned text, as actually spoken.
+    text: str
+    start_char: int
+    end_char: int
+    start_seconds: float
+    end_seconds: float
+
+
 class JobResponse(ApiModel):
     """A job as the API presents it."""
 
@@ -170,6 +193,10 @@ class JobResponse(ApiModel):
     story_text: str | None = None
     audio: list[AudioAsset] = Field(default_factory=list)
     segment_count: int | None = None
+    #: Empty until the audio exists, and stays empty for jobs finished before the
+    #: timeline was recorded. A client must treat it as an enhancement, never as a
+    #: requirement: the story and the audio are both complete without it.
+    segments: list[SpokenSegment] = Field(default_factory=list)
 
     error: ErrorDetail | None = None
     timings: JobTimings

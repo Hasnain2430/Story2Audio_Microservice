@@ -10,6 +10,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
+from pydantic import ValidationError
 from sqlalchemy import Select, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,6 +28,7 @@ from story2audio_shared.enums import (
 from story2audio_shared.errors import AppError, ErrorCode, spec_for
 from story2audio_shared.events import CancelledEvent, JobEvent, StatusEvent
 from story2audio_shared.ids import uuid7
+from story2audio_shared.logging import get_logger
 from story2audio_shared.models import Job, Voice
 from story2audio_shared.schemas import (
     AudioAsset,
@@ -34,11 +36,14 @@ from story2audio_shared.schemas import (
     ErrorDetail,
     JobResponse,
     JobTimings,
+    SpokenSegment,
 )
 from story2audio_shared.storage import ObjectStorage
 
 #: Hourly job-creation window.
 _JOBS_WINDOW_SECONDS = 3600
+
+log = get_logger(__name__)
 
 
 async def create_job(
@@ -233,6 +238,7 @@ def to_response(job: Job, storage: ObjectStorage, *, ttl_seconds: int) -> JobRes
         story_text=job.story_text,
         audio=audio,
         segment_count=job.segment_count,
+        segments=_spoken_segments(job),
         error=error,
         timings=JobTimings(
             queued_at=job.queued_at,
@@ -244,6 +250,29 @@ def to_response(job: Job, storage: ObjectStorage, *, ttl_seconds: int) -> JobRes
         created_at=job.created_at,
         updated_at=job.updated_at,
     )
+
+
+def _spoken_segments(job: Job) -> list[SpokenSegment]:
+    """Read the worker's timeline, tolerating its absence and its age.
+
+    The column is JSON written by another service, so it is validated rather than
+    trusted: a row from before the timeline existed is null, and a row written by an
+    older worker may lack fields this version expects. Either way the job is still
+    complete — the timeline only drives a playback nicety — so a bad entry is dropped
+    and the rest are served, never raised at a caller asking for their story.
+    """
+    raw = job.segment_timeline
+    if not raw:
+        return []
+
+    segments: list[SpokenSegment] = []
+    for entry in raw:
+        try:
+            segments.append(SpokenSegment.model_validate(entry))
+        except ValidationError:
+            log.warning("job_segment_timeline_unreadable", job_id=str(job.id))
+            return []
+    return segments
 
 
 # --- Guardrails -------------------------------------------------------------------------

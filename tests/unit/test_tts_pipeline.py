@@ -8,6 +8,7 @@ miss, a dialogue job using two voices — is reachable without a GPU.
 from __future__ import annotations
 
 import io
+import itertools
 import wave
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -468,6 +469,89 @@ def run(
 
 
 # --- Pipeline ------------------------------------------------------------------------------------
+
+
+def test_segment_spans_point_back_into_the_original_story() -> None:
+    """The span must locate the segment in the *written* story, not the spoken one.
+
+    Spoken text is cleaned — quotes stripped, whitespace collapsed — so it cannot be
+    found again with a search. The span is the only way back, and a player highlighting
+    the wrong characters is worse than one highlighting none.
+    """
+    segments = split_story(WITH_DIALOGUE)
+
+    for segment in segments:
+        excerpt = WITH_DIALOGUE[segment.start_char : segment.end_char]
+        # The excerpt is the written form of what is spoken: same text once cleaned.
+        assert clean_segment_text(excerpt) == segment.text
+
+    # Spans are ordered and never overlap, so a position maps to at most one segment.
+    for earlier, later in itertools.pairwise(segments):
+        assert earlier.end_char <= later.start_char
+
+
+def test_dialogue_spans_exclude_the_quotation_marks() -> None:
+    """The quotes are punctuation on the page, not part of the spoken line."""
+    spoken = [segment for segment in split_story(WITH_DIALOGUE) if segment.is_dialogue]
+
+    assert len(spoken) == 1
+    excerpt = WITH_DIALOGUE[spoken[0].start_char : spoken[0].end_char]
+    assert excerpt == "I am not leaving without you,"
+
+
+def test_the_timeline_matches_where_the_audio_actually_lands(
+    sessions: sessionmaker[Session],
+    publisher: SyncEventPublisher,
+    storage: StubStorage,
+    settings: TtsWorkerSettings,
+    written_job: Job,
+) -> None:
+    """The timeline is arithmetic that reproduces `join`, so it can drift from it.
+
+    Checked against the real assembled track rather than against itself: the lead-in
+    comes first, one pause sits between consecutive segments, and the last segment ends
+    where the audio does. If `join` ever changes its spacing and this does not, these
+    are the assertions that fail.
+    """
+    run(sessions, publisher, StubEngine(), storage, settings, written_job.id)
+
+    finished = reload_job(sessions, written_job.id)
+    timeline = finished.segment_timeline
+    assert timeline is not None
+    assert len(timeline) == finished.segment_count
+
+    lead = settings.lead_silence_ms / 1000
+    pause = settings.segment_pause_ms / 1000
+
+    assert timeline[0]["start_seconds"] == pytest.approx(lead, abs=0.002)
+
+    for earlier, later in itertools.pairwise(timeline):
+        assert earlier["end_seconds"] < later["start_seconds"]
+        gap = later["start_seconds"] - earlier["end_seconds"]
+        assert gap == pytest.approx(pause, abs=0.002)
+
+    assert finished.audio_duration_seconds is not None
+    assert timeline[-1]["end_seconds"] == pytest.approx(finished.audio_duration_seconds, abs=0.01)
+
+
+def test_the_timeline_carries_what_a_player_needs(
+    sessions: sessionmaker[Session],
+    publisher: SyncEventPublisher,
+    storage: StubStorage,
+    settings: TtsWorkerSettings,
+    written_job: Job,
+) -> None:
+    run(sessions, publisher, StubEngine(), storage, settings, written_job.id)
+
+    finished = reload_job(sessions, written_job.id)
+    assert finished.segment_timeline is not None
+    assert finished.story_text is not None
+
+    for index, entry in enumerate(finished.segment_timeline):
+        assert entry["index"] == index
+        assert entry["text"]
+        assert entry["start_char"] < entry["end_char"] <= len(finished.story_text)
+        assert entry["start_seconds"] < entry["end_seconds"]
 
 
 def test_the_job_reaches_done_with_audio_stored(

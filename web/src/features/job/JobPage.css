@@ -169,45 +169,33 @@
   border-top: var(--border-hairline) solid var(--border);
 }
 
-.story__body {
-  font-family: var(--font-prose);
-  font-size: var(--text-lg);
-  line-height: var(--leading-prose);
-  font-variation-settings: "SOFT" 0, "WONK" 0, "opsz" 14;
-  color: var(--text);
+.story__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
   max-width: var(--measure);
 }
 
-.story__body p + p {
-  margin-top: var(--space-4);
-  /* Indented continuation, the way a printed page does it. */
-  text-indent: 1.4em;
+.story__hint {
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  color: var(--text-faint);
 }
 
-/* Drop cap: this is prose, and it should announce itself as prose. */
-.story__body p:first-child::first-letter {
-  float: left;
-  font-size: 3.1em;
-  line-height: 0.82;
-  padding: 0.08em 0.09em 0 0;
-  color: var(--accent);
-  font-variation-settings: "SOFT" 0, "WONK" 1, "opsz" 72;
+/* The player stays reachable while reading a long story. */
+.job__player {
+  position: sticky;
+  top: var(--space-3);
+  z-index: 2;
 }
 
+/* Used by the transcript's caret; kept here because it is the only keyframe on the page. */
 @keyframes caret {
   50% {
     opacity: 0;
   }
-}
-
-.story__caret {
-  display: inline-block;
-  width: 0.5em;
-  height: 1.05em;
-  margin-left: 2px;
-  vertical-align: text-bottom;
-  background: var(--accent);
-  animation: caret 1s steps(2, start) infinite;
 }
 
 /* ---- Timings --------------------------------------------------------------------------------- */

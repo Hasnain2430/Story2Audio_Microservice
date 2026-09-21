@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select
@@ -106,11 +107,19 @@ def run_tts_stage(
     rendered = _synthesize_segments(
         session_factory, publisher, engine, storage, settings, job_id, request, segments
     )
-    mixed = _assemble(rendered, settings)
+    mixed, timeline = _assemble(segments, rendered, settings)
     assets = _upload(storage, job_id, mixed, settings)
 
     with session_scope(session_factory) as session:
-        _finish(session, publisher, job_id, mixed=mixed, assets=assets, segments=len(segments))
+        _finish(
+            session,
+            publisher,
+            job_id,
+            mixed=mixed,
+            assets=assets,
+            segments=len(segments),
+            timeline=timeline,
+        )
 
     return StageOutcome(
         completed=True, segment_count=len(segments), duration_seconds=mixed.duration_seconds
@@ -297,14 +306,21 @@ def _publish_progress(
 # --- Assembly and delivery -----------------------------------------------------------------------
 
 
-def _assemble(rendered: list[PcmAudio], settings: TtsWorkerSettings) -> PcmAudio:
-    """Join the segments into one track."""
-    usable = [segment for segment in rendered if not segment.is_empty]
-    if not usable:
+def _assemble(
+    segments: list[Segment], rendered: list[PcmAudio], settings: TtsWorkerSettings
+) -> tuple[PcmAudio, list[dict[str, Any]]]:
+    """Join the segments into one track, and record where each one lands in it."""
+    pairs = [
+        (segment, audio)
+        for segment, audio in zip(segments, rendered, strict=True)
+        if not audio.is_empty
+    ]
+    if not pairs:
         raise AppError(ErrorCode.AUDIO_ASSEMBLY_FAILED, detail="every segment rendered silent")
 
+    usable = [audio for _, audio in pairs]
     sample_rate = usable[0].sample_rate
-    if any(segment.sample_rate != sample_rate for segment in usable):
+    if any(audio.sample_rate != sample_rate for audio in usable):
         # Concatenating mismatched rates would play back at the wrong speed rather than
         # failing, which is the kind of bug that reaches a listener before a log.
         raise AppError(
@@ -317,7 +333,45 @@ def _assemble(rendered: list[PcmAudio], settings: TtsWorkerSettings) -> PcmAudio
         pause_ms=settings.segment_pause_ms,
         lead_ms=settings.lead_silence_ms,
     )
-    return audio_ops.normalise_peak(joined)
+    # Peak normalisation scales amplitude only, so the timeline is unaffected by it.
+    return audio_ops.normalise_peak(joined), _timeline(pairs, settings)
+
+
+def _timeline(
+    pairs: list[tuple[Segment, PcmAudio]], settings: TtsWorkerSettings
+) -> list[dict[str, Any]]:
+    """Where each segment starts and ends in the assembled track.
+
+    This is measured, not estimated. The worker rendered every segment and knows each
+    one's exact duration, and it is the worker that inserts the lead-in and the pauses --
+    so the arithmetic here reproduces `audio_ops.join` exactly rather than approximating
+    it. That is what lets the player highlight the story in time with the narration
+    without anything having to listen to the audio afterwards.
+
+    It must stay in step with `join`: lead silence first, then one pause *between*
+    consecutive segments.
+    """
+    cursor = settings.lead_silence_ms / 1000
+    timeline: list[dict[str, Any]] = []
+
+    for index, (segment, audio) in enumerate(pairs):
+        if index > 0:
+            cursor += settings.segment_pause_ms / 1000
+        start = cursor
+        cursor += audio.duration_seconds
+        timeline.append(
+            {
+                "index": index,
+                "kind": segment.kind.value,
+                "text": segment.text,
+                "start_char": segment.start_char,
+                "end_char": segment.end_char,
+                "start_seconds": round(start, 3),
+                "end_seconds": round(cursor, 3),
+            }
+        )
+
+    return timeline
 
 
 def _upload(
@@ -343,6 +397,7 @@ def _finish(
     mixed: PcmAudio,
     assets: dict[AudioFormat, tuple[str, int]],
     segments: int,
+    timeline: list[dict[str, Any]],
 ) -> None:
     """Mark the job done and announce it."""
     mp3_key, mp3_bytes = assets[AudioFormat.MP3]
@@ -359,6 +414,7 @@ def _finish(
         audio_bytes_wav=wav_bytes,
         audio_duration_seconds=mixed.duration_seconds,
         segments_done=segments,
+        segment_timeline=timeline,
         finished_at=datetime.now(UTC),
     )
     if not result.applied:

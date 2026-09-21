@@ -17,6 +17,7 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import (
+    JSON,
     CheckConstraint,
     DateTime,
     Float,
@@ -201,6 +202,16 @@ class Job(Base, TimestampMixin):
     audio_duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
     segment_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     segments_done: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: Where each spoken segment lands in the finished track, written by the TTS worker
+    #: when it assembles the audio: index, kind, text, the span of the original story it
+    #: covers, and its start and end in seconds.
+    #:
+    #: Stored as JSON rather than as a table. It is written once, always read whole with
+    #: its job, and never queried across jobs — a child table would add a join and a
+    #: migration surface to buy ordering guarantees the array already has. Null for jobs
+    #: finished before this existed, which the API and the player both treat as "no
+    #: timeline", not as an error.
+    segment_timeline: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
 
     # --- Failure -------------------------------------------------------------------------
     #: Classified cause. The raw exception goes to the logs only; v1 returned it verbatim.
