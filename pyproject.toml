@@ -90,6 +90,12 @@ exclude = ["^legacy/", "_pb2\\.py$", "_pb2_grpc\\.py$"]
 module = ["pydub.*", "celery.*", "soundfile.*", "TTS.*"]
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+# Celery's `@app.task` decorator is untyped, which under --strict makes every task
+# function untyped too. Scoped to the task modules so the relaxation cannot spread.
+module = ["story_worker.tasks", "tts_worker.tasks"]
+disallow_untyped_decorators = false
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"

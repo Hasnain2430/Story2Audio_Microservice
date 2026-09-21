@@ -1259,6 +1259,7 @@ dependencies = [
     { name = "boto3" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
+    { name = "redis" },
     { name = "sqlalchemy" },
     { name = "structlog" },
 ]
@@ -1268,6 +1269,7 @@ requires-dist = [
     { name = "boto3", specifier = ">=1.35" },
     { name = "pydantic", specifier = ">=2.9" },
     { name = "pydantic-settings", specifier = ">=2.6" },
+    { name = "redis", specifier = ">=5.2" },
     { name = "sqlalchemy", specifier = ">=2.0.36" },
     { name = "structlog", specifier = ">=24.4" },
 ]

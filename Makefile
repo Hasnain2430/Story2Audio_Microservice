@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help setup lint fmt typecheck test check web-install web-lint web-build up down logs clean
+.PHONY: help setup lint fmt typecheck test check web-install web-lint web-build worker-story up down logs clean
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
@@ -33,6 +33,9 @@ web-lint: ## Lint + typecheck the frontend
 
 web-build: ## Production build of the frontend
 	cd web && npm run build
+
+worker-story: ## Run the story worker against the local broker
+	uv run --package story2audio-story-worker celery -A story_worker.app:celery_app worker \n		--queues story --concurrency 2 --loglevel info
 
 up: ## Bring up the local stack (Phase 5)
 	docker compose -f infra/docker-compose.yml up --build
