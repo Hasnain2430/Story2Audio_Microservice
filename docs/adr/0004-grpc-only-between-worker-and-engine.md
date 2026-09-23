@@ -51,7 +51,8 @@ backpressure from HTTP/2 flow control.
   hand-rolled chunked encoding, and no shared schema. Strictly worse for this traffic.
 - **Removing the boundary — synthesis inside the worker.** This is v1's shape. It ties
   GPU memory to a process doing CPU work, makes the GPU un-shareable, and makes
-  scale-to-zero impossible, which is the whole cost strategy in `docs/04`.
+  scale-to-zero impossible — and a GPU that can sleep between jobs is what keeps the
+  idle cost of this system near zero.
 - **Keeping gRPC public as well.** Browsers need grpc-web and a proxy, and the API would
   gain a second contract to version for no benefit.
 

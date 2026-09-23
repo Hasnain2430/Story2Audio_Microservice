@@ -60,8 +60,7 @@ def build_celery_app() -> Celery:
         # At-least-once delivery: the message is acknowledged after the task finishes, so
         # a worker killed mid-generation gets it redelivered rather than losing the job.
         # The task is written to be idempotent against its own row, and an advisory Redis
-        # lease stops two concurrent deliveries both paying the model (ADR notes in
-        # docs/03).
+        # lease stops two concurrent deliveries both paying the model.
         task_acks_late=True,
         task_reject_on_worker_lost=True,
         # One job at a time per process. These tasks are minutes long and the useful

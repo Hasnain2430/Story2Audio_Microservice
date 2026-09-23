@@ -1,5 +1,12 @@
 .DEFAULT_GOAL := help
-.PHONY: help setup proto lint fmt typecheck test test-integration check web-install web-lint \n        web-build tts-engine worker-story worker-tts up up-gpu down logs clean
+.PHONY: help setup proto lint fmt typecheck test test-integration check web-install web-lint \
+        web-build tts-engine tts-engine-native worker-story worker-tts up up-gpu down logs clean
+
+# Compose resolves `.env` relative to the compose file's directory, which is `infra/`, not
+# the repository root -- so without this the root `.env` is silently ignored, the stack
+# falls back to a local Ollama that is usually not running, and story generation fails.
+# Passed only when the file exists, because `--env-file` with a missing path is an error.
+ENV_FILE := $(if $(wildcard .env),--env-file .env,)
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
@@ -59,10 +66,10 @@ worker-story: ## Run the story worker against the local broker
 	uv run --package story2audio-story-worker celery -A story_worker.app:celery_app worker \n		--queues story --concurrency 2 --loglevel info
 
 up: ## Bring up the local stack (stub TTS; no GPU needed)
-	docker compose -f infra/docker-compose.yml up --build
+	docker compose $(ENV_FILE) -f infra/docker-compose.yml up --build
 
 up-gpu: ## Bring up the local stack with real XTTS on a local GPU
-	docker compose -f infra/docker-compose.yml -f infra/docker-compose.gpu.yml up --build
+	docker compose $(ENV_FILE) -f infra/docker-compose.yml -f infra/docker-compose.gpu.yml up --build
 
 down: ## Tear down the local stack
 	docker compose -f infra/docker-compose.yml down -v

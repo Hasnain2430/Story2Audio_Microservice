@@ -9,6 +9,11 @@ Usage::
 
     uv run python infra/scripts/run_job.py
     uv run python infra/scripts/run_job.py --prompt "..." --voice "Morgan Freeman"
+    uv run python infra/scripts/run_job.py --save out.wav   # then check_audio.py out.wav
+
+``--save`` downloads the finished WAV in the same session. It has to: the file is served
+through the job, and the job belongs to this script's cookie, so a separate download would
+be refused for the same reason a separate poll is.
 """
 
 from __future__ import annotations
@@ -19,6 +24,7 @@ import sys
 import time
 import urllib.request
 from http.cookiejar import CookieJar
+from pathlib import Path
 from typing import Any
 
 TERMINAL = {"done", "failed", "cancelled"}
@@ -40,6 +46,7 @@ def main() -> int:
     parser.add_argument("--mode", default="narration_with_dialogue")
     parser.add_argument("--length", default="short")
     parser.add_argument("--timeout", type=float, default=1800.0)
+    parser.add_argument("--save", type=Path, help="write the finished WAV here")
     args = parser.parse_args()
 
     opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(CookieJar()))
@@ -115,6 +122,15 @@ def main() -> int:
     audio = job.get("audio") or []
     if audio:
         say(f"audio  {audio[0]['duration_seconds']:.1f}s")
+
+    if args.save:
+        wav = next((asset for asset in audio if asset["format"] == "wav"), None)
+        if wav is None:
+            say("no WAV to save")
+            return 1
+        with opener.open(wav["url"], timeout=120) as response:
+            args.save.write_bytes(response.read())
+        say(f"saved  {args.save}")
 
     segments = job.get("segments") or []
     say(f"timeline  {len(segments)} entries")

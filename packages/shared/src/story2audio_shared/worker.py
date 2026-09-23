@@ -8,7 +8,7 @@ redelivery — so it lives here and is imported, not reimplemented (ADR-0001).
 
 Everything here is synchronous. Celery runs a pool of synchronous worker processes and
 these tasks are minutes long, so concurrency comes from processes rather than from an
-event loop; see the Phase 3 notes in ``docs/03-implementation-plan.md``.
+event loop.
 """
 
 from __future__ import annotations
