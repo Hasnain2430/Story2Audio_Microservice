@@ -1,205 +1,169 @@
-# 🎧 Story2Audio
+# Story2Audio
 
-**Story2Audio** is a multi-modal AI storytelling system that takes a short prompt and generates a complete narrated story with expressive emotional audio. It uses a custom gRPC backend powered by LLaMA3 (via Ollama), XTTS (voice cloning), and Streamlit or REST clients to provide a responsive and flexible frontend experience.
+Give it a premise; it writes a short story and reads it aloud in cloned voices — a
+narrator, plus a voice for each character when the story has dialogue.
+
+It is built as a job-based pipeline. The API answers in milliseconds with a job id, and
+the work happens behind a queue: one worker writes the story with an LLM, another turns it
+into speech with XTTS v2 on a GPU. The browser follows along live, and starts playing the
+opening of the story while the rest is still being recorded.
+
+> v1 — a Streamlit client over a gRPC call that blocked for up to ten minutes — is
+> preserved in [`legacy/`](./legacy/). It is there for comparison, not to be run.
 
 ---
 
-## 🧠 Architecture
+## Measured
+
+On an RTX 3050 4 GB laptop GPU, fp32 XTTS v2, Groq `openai/gpt-oss-120b`:
+
+| | v1 | v2 |
+|---|---|---|
+| Request returns | after up to 10 minutes | **~190 ms**, with a job id |
+| Story text visible | when everything is done | **~2 s**, streaming |
+| First audio playable | when everything is done | **8.3 s** |
+| Whole recording | 7–10 minutes | **60 s** for about three minutes of audio |
+| Page refresh | loses the job | loses nothing |
+| Cancel | not possible | stops the GPU mid-job |
+
+---
+
+## Architecture
 
 ```
-User (Streamlit or REST)
-        │
+React / TypeScript
+        │  REST + WebSocket
         ▼
-┌─────────────────────────────────────────┐
-│         gRPC Server                     │
-│  ┌─────────────────────────┐            │
-│  │ - Story prompt + meta   │            │
-│  │ - LLaMA3/Mistral LLM    │            │
-│  │ - XTTS for voice TTS    │            │
-│  └─────────────────────────┘            │
-└─────────────────────────────────────────┘
-        │
-        ▼
-🎧 Audio Output + 📜 Story Text
+   FastAPI gateway ──────────► Postgres   (jobs, voices, the timeline)
+        │  Celery over Redis
+        ├────────────► story-worker ─────► LLM provider (Groq, or Ollama locally)
+        │                    │
+        │              Redis pub/sub ◄────── events, per-job sequence numbers
+        │                    │
+        └────────────► tts-worker ──gRPC──► tts-engine (XTTS v2, GPU)
+                             │
+                             ▼
+                      object storage ──► presigned URLs to the browser
 ```
+
+| Service | Responsibility |
+|---|---|
+| `gateway` | HTTP and WebSocket API, validation, rate limits, signing URLs. Holds no model |
+| `story-worker` | Writes the story and streams it token by token |
+| `tts-worker` | Splits the story into segments, casts each character to a voice, assembles and uploads the audio |
+| `tts-engine` | Holds XTTS in GPU memory and streams PCM over gRPC |
+
+### What it does
+
+- **Streams at every stage.** Story text arrives token by token. Audio is published a
+  segment at a time as it is rendered, and played back to back through the Web Audio API
+  while the rest is still being made.
+- **Casts dialogue.** Each quoted line is attributed to the character who says it — from
+  speech tags, action beats, pronouns, and turn-taking — and each character is read in
+  their own voice. Pauses follow the text: short where a sentence was split for length,
+  longer at a paragraph, longer still when the speaker changes.
+- **Reads along.** The story highlights itself as it is narrated, dialogue tinted by
+  character, and any word can be clicked to jump there.
+- **Clones voices** from an uploaded clip or one recorded in the browser.
+- **Survives the browser.** Every job has its own URL from the moment it exists; close the
+  tab, come back, and the recording is still going — or finished.
 
 ---
 
-## ⚙️ Set Up Environment
+## Running it
 
-```bash
-# 1. Clone the repository
-git clone https://github.com/yourusername/story2audio.git
-cd story2audio
+You need **Docker**, **Node 22+**, and **[uv](https://docs.astral.sh/uv/)**. A GPU is
+optional; without one the stack runs end to end, but the voice engine renders a test tone
+rather than speech.
 
-# 2. Create a virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+**1. Configure.**
 
-# 3. Install dependencies
-pip install -r requirements.txt
-
-# 4. Prepare model directories
-mkdir -p output voices xtts_model
+```sh
+cp .env.example .env
 ```
 
-> ✅ Make sure you have:
->
-> * A CUDA-compatible GPU (for XTTS)
-> * `ollama` installed and running locally (`ollama pull llama3` and `ollama pull mistral:7b-instruct`)
-> * XTTS model files inside `xtts_model/` directory
-> * Protocol buffers compiler installed for gRPC
+Pick a story model in `.env`:
+
+| To use | Set |
+|---|---|
+| Groq (hosted) | `LLM_PROVIDER=groq`, `LLM_MODEL=openai/gpt-oss-120b`, `GROQ_API_KEY=…` |
+| Ollama (local) | `LLM_PROVIDER=ollama`, `LLM_MODEL=llama3`, with Ollama running |
+| Nothing at all | `LLM_PROVIDER=fake` — canned text, useful for checking the plumbing |
+
+**2. Start the backend.**
+
+```sh
+docker compose --env-file .env -f infra/docker-compose.yml up --build
+```
+
+This brings up Postgres, Redis, MinIO, the gateway on `:8000`, both workers, and the voice
+engine, after a one-shot job that runs the database migrations and seeds the voice
+catalogue. Pass `--env-file` explicitly: Compose otherwise looks for `.env` next to the
+compose file, in `infra/`, and silently ignores the one you just made.
+
+**3. Start the frontend.**
+
+```sh
+cd web
+npm install
+npm run dev
+```
+
+Open **http://localhost:5173**.
+
+### Real voices
+
+With an NVIDIA GPU and the NVIDIA Container Toolkit, add the GPU overlay:
+
+```sh
+docker compose --env-file .env \
+  -f infra/docker-compose.yml -f infra/docker-compose.gpu.yml up --build
+```
+
+On Windows, where a laptop GPU cannot be passed through to Docker, run the engine natively
+and point the worker at it — see [`infra/README.md`](./infra/README.md).
+
+To confirm you are hearing speech and not the test tone:
+
+```sh
+uv run python infra/scripts/run_job.py --save out.wav   # submit a job, follow it, save the WAV
+uv run python infra/scripts/check_audio.py out.wav      # "SPEECH" or "TONE"
+```
+
+### Tests
+
+```sh
+uv sync --all-packages --all-groups
+uv run python infra/scripts/gen_proto.py
+uv run pytest tests/unit                           # 555 tests, no Docker needed
+cd web && npm test                                 # 17 tests
+```
+
+With `make`: `make setup`, `make check` runs everything CI runs, and `make up` / `make up-gpu`
+start the stack.
 
 ---
 
-## 🚀 Running the Service
+## Layout
 
-### Start the gRPC server
-```bash
-python server.py
+```
+packages/shared/     the domain: enums, errors, events, schemas, models, prompts, storage
+services/gateway/    FastAPI app, Alembic migrations, voice catalogue seeding
+services/story_worker/
+services/tts_worker/ segmentation, speaker attribution, casting, assembly
+services/tts_engine/ XTTS behind gRPC, with its own CUDA Dockerfile
+proto/               the gRPC contract between tts-worker and tts-engine
+web/                 React + TypeScript frontend
+infra/               compose files, the shared Python Dockerfile, operational scripts
+tests/               unit and end-to-end tests
+docs/                the audit of v1, what changed, and design decisions
+legacy/              v1, preserved for comparison
 ```
 
-### Start the Streamlit frontend
-```bash
-streamlit run streamlit_ms.py
-```
+## Documentation
 
-### (Optional) Start the REST proxy server
-```bash
-python rest_server.py
-```
-This will start a REST server at `http://localhost:8000/generate-story/`.
-
----
-
-## 📱 gRPC Interface
-
-### Proto file: `story_service.proto`
-```proto
-syntax = "proto3";
-
-service StoryService {
-  rpc GenerateStory (StoryRequest) returns (StoryResponse);
-}
-
-message StoryRequest {
-  string prompt = 1;
-  string emotion = 2;
-  float speed = 3;
-  string language = 4;
-  string speaker_audio = 5;
-  bool include_narration = 6;
-}
-
-message StoryResponse {
-  bytes audio = 1;
-  string text = 2;
-  string message = 3;
-}
-```
-
----
-
-## ✨ Features
-
-* 📜 **Intelligent Story Generation**: Create compelling stories with LLaMA3 or Mistral based on your prompt and desired length
-* 🎭 **Emotional Expression**: Choose from different emotional tones (happy, sad, angry, neutral)
-* 🗣️ **Voice Modes**: Select between narration-only or narration + dialogue (with female character voices)
-* 🌐 **Multi-language Support**: Generate stories in multiple languages (en, es, fr, de, hi, it, ru)
-* 🔊 **Voice Cloning**: Use any voice by uploading a .wav file (≥15s) or recording directly in the app
-* ⚡ **Concurrent Processing**: Generate multiple stories simultaneously with real-time progress tracking
-* 🎛️ **Customization Options**: Adjust speech speed and story complexity to your preferences
-
----
-
-## 🗣️ How to Add Custom Voice
-
-In the Streamlit interface:
-1. Upload a `.wav` file (minimum 15 seconds)
-2. OR record your voice using the built-in microphone recorder
-3. Provide a unique speaker name
-4. Your voice will appear in the dropdown menu for future story generation
-
-All voices are saved under the `voices/` folder and indexed in `speakers.json`.
-
----
-
-## 🌐 REST API Usage
-
-### Endpoint:
-```
-POST http://localhost:8000/generate-story/
-```
-
-### JSON Payload:
-```json
-{
-  "prompt": "[PARA_LEVEL:1–3] A young girl finds a lost puppy in the rain.",
-  "emotion": "happy",
-  "speed": 1.0,
-  "language": "en",
-  "include_narration": true,
-  "speaker_audio_base64": "Uk1GR..."
-}
-```
-
-### Response:
-```json
-{
-  "text": "Generated story text...",
-  "message": "success",
-  "audio_file": "response_audio.wav"
-}
-```
-
----
-
-## 🧪 Test Case Format & Automation
-
-Sample test case format (`TestCases.json`):
-```json
-[
-  {
-    "prompt": "[PARA_LEVEL:1–3] A young girl finds a lost puppy in the rain.",
-    "emotion": "happy",
-    "speed": 1.0,
-    "language": "en",
-    "include_narration": true,
-    "speaker_audio_base64": "Uk1GR..."
-  }
-]
-```
-
-You can use this with `rest_server.py` to send batches of test prompts to the gRPC server via REST.
-
----
-
-## 📊 Performance Evaluation
-
-The graph below shows the average response time based on story length and voice mode:
-
-![Average Response Time vs. Paragraph Range](./performance_graph.png)
-
-
-| Paragraph Range | Narration Only | Narration + Dialogue |
-|-----------------|---------------:|---------------------:|
-| 1-3 paragraphs  | ~1.8 minutes   | ~2.8 minutes         |
-| 4-7 paragraphs  | ~7.0 minutes   | ~9.0 minutes         |
-| 8+ paragraphs   | ~8.0 minutes   | ~9.9 minutes         |
-
-Key observations:
-- Narration + Dialogue mode takes approximately 20-30% longer than Narration Only
-- Processing time increases significantly between short (1-3) and medium (4-7) stories
-- Response times are based on a system with NVIDIA RTX 3050 GPU
-
----
-
-> ℹ️ **Tips for Best Results**:  
-> * Prompt must be in English — this works best for generating English audio stories  
-> * Use specific, emotionally rich story prompts  
-> * Choose a voice and emotion that match your story theme  
-> * For longer stories, use `[PARA_LEVEL:8+]` in your prompt  
-> * High-quality speaker audio (clear, minimal background noise) improves speaker cloning  
-> * Longer paragraph levels take more time to process; shorter ones are faster  
-> * Ensure GPU is enabled for faster processing
-
+- [**What changed from v1**](./docs/02-what-changed.md) — the result, the architecture, and
+  each of v1's twenty defects with what replaced it.
+- [**The v1 audit**](./docs/01-system-analysis.md) — the evidence behind every claim about
+  how v1 behaved.
+- [**Design decisions**](./docs/adr/) — what was chosen, what was turned down, and why.

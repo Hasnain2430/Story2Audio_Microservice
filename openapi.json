@@ -1,0 +1,1175 @@
+{
+  "components": {
+    "schemas": {
+      "AudioAsset": {
+        "additionalProperties": false,
+        "description": "One rendered audio file, addressed by a short-lived presigned URL.\n\nAudio never travels through the API itself. v1 returned it as protobuf ``bytes``,\nwhich is why both client and server had to raise their gRPC message limit to 100 MB.",
+        "properties": {
+          "duration_seconds": {
+            "title": "Duration Seconds",
+            "type": "number"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "format": {
+            "$ref": "#/components/schemas/AudioFormat"
+          },
+          "size_bytes": {
+            "title": "Size Bytes",
+            "type": "integer"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "format",
+          "url",
+          "duration_seconds",
+          "size_bytes",
+          "expires_at"
+        ],
+        "title": "AudioAsset",
+        "type": "object"
+      },
+      "AudioFormat": {
+        "description": "Delivery formats. MP3 is streamed to the player; WAV is offered for download.",
+        "enum": [
+          "mp3",
+          "wav"
+        ],
+        "title": "AudioFormat",
+        "type": "string"
+      },
+      "Body_create_voice_v1_voices_post": {
+        "properties": {
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 60,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "file"
+        ],
+        "title": "Body_create_voice_v1_voices_post",
+        "type": "object"
+      },
+      "CreateJobRequest": {
+        "additionalProperties": false,
+        "description": "Body of ``POST /v1/jobs``.",
+        "properties": {
+          "dialogue_voice_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dialogue Voice Id"
+          },
+          "emotion": {
+            "$ref": "#/components/schemas/Emotion",
+            "default": "neutral"
+          },
+          "language": {
+            "$ref": "#/components/schemas/Language",
+            "default": "en"
+          },
+          "length": {
+            "$ref": "#/components/schemas/StoryLength",
+            "default": "medium"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/VoiceMode",
+            "default": "narration"
+          },
+          "prompt": {
+            "maxLength": 20000,
+            "minLength": 1,
+            "title": "Prompt",
+            "type": "string"
+          },
+          "second_dialogue_voice_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Second Dialogue Voice Id"
+          },
+          "speed": {
+            "default": 1.0,
+            "maximum": 1.5,
+            "minimum": 0.5,
+            "title": "Speed",
+            "type": "number"
+          },
+          "voice_id": {
+            "format": "uuid",
+            "title": "Voice Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "prompt",
+          "voice_id"
+        ],
+        "title": "CreateJobRequest",
+        "type": "object"
+      },
+      "CreateJobResponse": {
+        "additionalProperties": false,
+        "description": "``202 Accepted`` body.\n\nThis is the whole architectural change in one shape: the caller gets an id and a\nplace to watch, in under 200 ms, instead of holding a socket open for ten minutes.",
+        "properties": {
+          "events_url": {
+            "title": "Events Url",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/JobStatus"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "events_url"
+        ],
+        "title": "CreateJobResponse",
+        "type": "object"
+      },
+      "Emotion": {
+        "description": "Emotional register for the story.\n\nIn v1 this was passed to ``TTS.tts_to_file(emotion=...)``, which XTTS v2 accepts and\nignores \u2014 the control did nothing audible. Here it conditions the *writing* instead,\nwhere it demonstrably changes the output.",
+        "enum": [
+          "neutral",
+          "happy",
+          "sad",
+          "angry"
+        ],
+        "title": "Emotion",
+        "type": "string"
+      },
+      "ErrorCode": {
+        "description": "Machine-readable failure reason.\n\nStored on the job row, published in the ``failed`` event, and returned in API error\nbodies, so the frontend can branch on the cause without parsing prose.",
+        "enum": [
+          "validation_failed",
+          "prompt_too_long",
+          "prompt_empty",
+          "job_not_found",
+          "job_not_cancellable",
+          "segment_not_found",
+          "voice_not_found",
+          "voice_forbidden",
+          "voice_invalid_audio",
+          "voice_too_short",
+          "voice_too_long",
+          "voice_too_large",
+          "voice_name_taken",
+          "dialogue_voice_required",
+          "rate_limited",
+          "concurrency_limit_reached",
+          "daily_cap_reached",
+          "llm_unavailable",
+          "llm_timeout",
+          "llm_rate_limited",
+          "llm_content_rejected",
+          "story_empty",
+          "tts_unavailable",
+          "tts_timeout",
+          "tts_capacity",
+          "audio_assembly_failed",
+          "storage_unavailable",
+          "cancelled",
+          "internal"
+        ],
+        "title": "ErrorCode",
+        "type": "string"
+      },
+      "ErrorDetail": {
+        "additionalProperties": false,
+        "description": "Public description of a failure. Never carries internal detail.",
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/ErrorCode"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "retryable": {
+            "title": "Retryable",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "retryable"
+        ],
+        "title": "ErrorDetail",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "JobResponse": {
+        "additionalProperties": false,
+        "description": "A job as the API presents it.",
+        "properties": {
+          "audio": {
+            "items": {
+              "$ref": "#/components/schemas/AudioAsset"
+            },
+            "title": "Audio",
+            "type": "array"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "dialogue_voice_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dialogue Voice Id"
+          },
+          "emotion": {
+            "$ref": "#/components/schemas/Emotion"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ErrorDetail"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "language": {
+            "$ref": "#/components/schemas/Language"
+          },
+          "length": {
+            "$ref": "#/components/schemas/StoryLength"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/VoiceMode"
+          },
+          "prompt": {
+            "title": "Prompt",
+            "type": "string"
+          },
+          "second_dialogue_voice_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Second Dialogue Voice Id"
+          },
+          "segment_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Segment Count"
+          },
+          "segments": {
+            "items": {
+              "$ref": "#/components/schemas/SpokenSegment"
+            },
+            "title": "Segments",
+            "type": "array"
+          },
+          "speed": {
+            "title": "Speed",
+            "type": "number"
+          },
+          "status": {
+            "$ref": "#/components/schemas/JobStatus"
+          },
+          "story_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Story Text"
+          },
+          "timings": {
+            "$ref": "#/components/schemas/JobTimings"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "voice_id": {
+            "format": "uuid",
+            "title": "Voice Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "prompt",
+          "length",
+          "mode",
+          "language",
+          "emotion",
+          "speed",
+          "voice_id",
+          "timings",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "JobResponse",
+        "type": "object"
+      },
+      "JobStatus": {
+        "description": "Lifecycle of a generation job.\n\n``written`` is a distinct state rather than an internal detail: the story is durably\npersisted at that point, so a failure in the TTS stage retries synthesis alone and\nnever re-runs the LLM.",
+        "enum": [
+          "queued",
+          "writing",
+          "written",
+          "synthesizing",
+          "done",
+          "failed",
+          "cancelled"
+        ],
+        "title": "JobStatus",
+        "type": "string"
+      },
+      "JobTimings": {
+        "additionalProperties": false,
+        "description": "Per-stage timestamps.\n\nThe source of the v1-versus-v2 performance comparison, and of the ``/stats`` page, so\nthe improvement is measured from real jobs rather than asserted.",
+        "properties": {
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "queued_at": {
+            "format": "date-time",
+            "title": "Queued At",
+            "type": "string"
+          },
+          "synthesizing_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Synthesizing At"
+          },
+          "writing_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Writing At"
+          },
+          "written_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Written At"
+          }
+        },
+        "required": [
+          "queued_at"
+        ],
+        "title": "JobTimings",
+        "type": "object"
+      },
+      "Language": {
+        "description": "Output language.\n\nRestricted to the intersection of what XTTS v2 synthesises and what v1 offered. The\nstory is written directly in this language by the LLM; v1's English-then-MarianMT\nround trip is gone, along with the unvalidated model-id interpolation it required.",
+        "enum": [
+          "en",
+          "es",
+          "fr",
+          "de",
+          "it",
+          "ru",
+          "hi"
+        ],
+        "title": "Language",
+        "type": "string"
+      },
+      "Page_JobResponse_": {
+        "additionalProperties": false,
+        "properties": {
+          "has_more": {
+            "default": false,
+            "title": "Has More",
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/JobResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "Page[JobResponse]",
+        "type": "object"
+      },
+      "Page_VoiceResponse_": {
+        "additionalProperties": false,
+        "properties": {
+          "has_more": {
+            "default": false,
+            "title": "Has More",
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/VoiceResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "Page[VoiceResponse]",
+        "type": "object"
+      },
+      "SegmentKind": {
+        "description": "Whether a slice of the story is narration or a character's spoken line.",
+        "enum": [
+          "narration",
+          "dialogue"
+        ],
+        "title": "SegmentKind",
+        "type": "string"
+      },
+      "SpokenSegment": {
+        "additionalProperties": false,
+        "description": "One spoken segment, placed in the audio and in the story.\n\nTwo coordinate systems, because they are not the same text. ``start_seconds`` and\n``end_seconds`` are the segment's position in the rendered track, measured by the\nworker that assembled it. ``start_char`` and ``end_char`` are its span in\n``story_text`` \u2014 needed separately because the spoken form has been cleaned\n(quotes stripped, whitespace collapsed) and so cannot be located by searching.\n\nTogether they are what a player needs to highlight the story as it is read.",
+        "properties": {
+          "end_char": {
+            "title": "End Char",
+            "type": "integer"
+          },
+          "end_seconds": {
+            "title": "End Seconds",
+            "type": "number"
+          },
+          "index": {
+            "title": "Index",
+            "type": "integer"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/SegmentKind"
+          },
+          "speaker": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Speaker"
+          },
+          "start_char": {
+            "title": "Start Char",
+            "type": "integer"
+          },
+          "start_seconds": {
+            "title": "Start Seconds",
+            "type": "number"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "index",
+          "kind",
+          "text",
+          "start_char",
+          "end_char",
+          "start_seconds",
+          "end_seconds"
+        ],
+        "title": "SpokenSegment",
+        "type": "object"
+      },
+      "StoryLength": {
+        "description": "Requested story length.\n\nA first-class field. In v1 this was a `[PARA_LEVEL:...]` marker embedded in the prompt\nstring, parsed by substring match, and stripped back out again in three separate\nfiles \u2014 so a user who typed the marker themselves could change server-side routing.",
+        "enum": [
+          "short",
+          "medium",
+          "long"
+        ],
+        "title": "StoryLength",
+        "type": "string"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      },
+      "VoiceMode": {
+        "description": "How many voices the finished audio uses.",
+        "enum": [
+          "narration",
+          "narration_with_dialogue"
+        ],
+        "title": "VoiceMode",
+        "type": "string"
+      },
+      "VoiceResponse": {
+        "additionalProperties": false,
+        "description": "A voice in the catalogue.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "duration_seconds": {
+            "title": "Duration Seconds",
+            "type": "number"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_builtin": {
+            "title": "Is Builtin",
+            "type": "boolean"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "preview_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preview Url"
+          },
+          "sample_rate": {
+            "title": "Sample Rate",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "is_builtin",
+          "duration_seconds",
+          "sample_rate",
+          "created_at"
+        ],
+        "title": "VoiceResponse",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "Asynchronous story-to-audio generation.\n\n`POST /v1/jobs` accepts a request and returns a job id immediately. Progress arrives over\n`WS /v1/jobs/{id}/events`, and `GET /v1/jobs/{id}` is authoritative at any time \u2014 the\nWebSocket is an optimisation over polling it, never a replacement.\n",
+    "title": "Story2Audio",
+    "version": "2.0.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/healthz": {
+      "get": {
+        "description": "Process is up. No dependency is consulted, by design.",
+        "operationId": "healthz_healthz_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Healthz Healthz Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Liveness",
+        "tags": [
+          "health"
+        ]
+      }
+    },
+    "/readyz": {
+      "get": {
+        "description": "Dependencies are reachable.\n\nReports per-dependency status rather than a bare boolean, so a failing readiness check\nsays which dependency is at fault without anyone having to read logs.",
+        "operationId": "readyz_readyz_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Readyz Readyz Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Readiness",
+        "tags": [
+          "health"
+        ]
+      }
+    },
+    "/v1/jobs": {
+      "get": {
+        "description": "Newest first, cursor-paginated on the job id (ADR-0002).",
+        "operationId": "list_jobs_v1_jobs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_JobResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List your jobs",
+        "tags": [
+          "jobs"
+        ]
+      },
+      "post": {
+        "description": "Accept a job and return its id.\n\n``202``, not ``200``: the work has been accepted, not performed. A repeated\n``Idempotency-Key`` returns the original job rather than queueing the same GPU work\ntwice, and is answered ``200`` so a client can tell a replay from a fresh submission.",
+        "operationId": "create_job_v1_jobs_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateJobRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateJobResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Submit a story for generation",
+        "tags": [
+          "jobs"
+        ]
+      }
+    },
+    "/v1/jobs/{job_id}": {
+      "delete": {
+        "description": "Request cancellation.\n\nWorkers check between segments, so this actually stops GPU work rather than only\nrelabelling the row \u2014 the thing v1 could not do at all.",
+        "operationId": "cancel_job_v1_jobs__job_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cancel a job",
+        "tags": [
+          "jobs"
+        ]
+      },
+      "get": {
+        "description": "The authoritative state of a job.\n\nSufficient on its own to drive the entire UI. The WebSocket is an optimisation over\npolling this endpoint, never a replacement for it \u2014 which is what makes the client's\npolling fallback safe.",
+        "operationId": "get_job_v1_jobs__job_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Fetch one job",
+        "tags": [
+          "jobs"
+        ]
+      }
+    },
+    "/v1/jobs/{job_id}/segments/{index}/audio": {
+      "get": {
+        "description": "Redirect to a freshly signed URL for one segment of a job.\n\nThis is what makes playback start before the job finishes: the worker publishes each\nsegment as it is rendered, and the client fetches them here by index. A stable URL\nrather than a signed one in the event, so the link cannot expire between being\nannounced and being used.\n\n307 rather than 302: the method must be preserved, and browsers and audio elements\nboth follow it to the object store without a second round trip through this service.",
+        "operationId": "get_segment_audio_v1_jobs__job_id__segments__index__audio_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "index",
+            "required": true,
+            "schema": {
+              "title": "Index",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "307": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Play one rendered segment",
+        "tags": [
+          "jobs"
+        ]
+      }
+    },
+    "/v1/voices": {
+      "get": {
+        "description": "Built-in voices plus the caller's own uploads.\n\nEach row carries a presigned preview URL, so the picker can play a sample before the\nuser commits to a generation.",
+        "operationId": "list_voices_v1_voices_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_VoiceResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List available voices",
+        "tags": [
+          "voices"
+        ]
+      },
+      "post": {
+        "description": "Register a new voice from an uploaded audio sample.\n\nMultipart, not base64-in-JSON: v1's REST proxy took the sample as a base64 string in\nthe request body, which inflates it by a third and pushes the whole thing through the\nJSON parser.",
+        "operationId": "create_voice_v1_voices_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_create_voice_v1_voices_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VoiceResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Upload a reference voice",
+        "tags": [
+          "voices"
+        ]
+      }
+    },
+    "/v1/voices/{voice_id}": {
+      "delete": {
+        "description": "Delete one of the caller's own voices. Built-ins are not deletable.",
+        "operationId": "delete_voice_v1_voices__voice_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "voice_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Voice Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete your voice",
+        "tags": [
+          "voices"
+        ]
+      }
+    }
+  }
+}

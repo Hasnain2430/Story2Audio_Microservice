@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: [main, v2-rebuild]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_FROZEN: "1"
+
+jobs:
+  python:
+    name: python (lint · typecheck · test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Sync workspace
+        run: uv sync --all-packages --all-groups
+
+      - name: Generate gRPC stubs
+        # The .proto is committed, the stubs are not, so they are built here rather
+        # than risking a stale copy in the repository.
+        run: uv run python infra/scripts/gen_proto.py
+
+      - name: Ruff (lint)
+        run: uv run ruff check --output-format=github .
+
+      - name: Ruff (format check)
+        run: uv run ruff format --check .
+
+      - name: Mypy
+        run: uv run mypy packages services
+
+      - name: Pytest
+        # --timeout guards against a hung WebSocket or dispatcher task wedging CI
+        # instead of failing it.
+        run: uv run pytest tests/unit -m "not integration and not e2e" --timeout=120
+
+  web:
+    name: web (lint · typecheck · build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build

@@ -1,0 +1,20 @@
+[project]
+name = "story2audio-shared"
+version = "2.0.0"
+description = "Shared domain: schemas, job enums, prompt library, storage client"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "sqlalchemy>=2.0.36",
+    "structlog>=24.4",
+    "boto3>=1.35",
+    "redis>=5.2",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/story2audio_shared"]

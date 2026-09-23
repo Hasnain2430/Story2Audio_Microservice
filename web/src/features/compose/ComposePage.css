@@ -1,0 +1,214 @@
+/* Compose. Editorial column on the left, settings rail on the right. */
+
+.compose {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-7);
+}
+
+.compose__head {
+  max-width: 44rem;
+}
+
+.compose__title {
+  margin-top: var(--space-3);
+  font-size: clamp(var(--text-3xl), 6vw, var(--text-5xl));
+  font-variation-settings: "SOFT" 0, "WONK" 1, "opsz" 48;
+}
+
+/* The second line carries the claim, so it gets the ink. */
+.compose__title-accent {
+  color: var(--text-muted);
+  font-style: italic;
+  font-variation-settings: "SOFT" 8, "WONK" 1, "opsz" 48;
+}
+
+.compose__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(19rem, 0.85fr);
+  gap: var(--space-7);
+  align-items: start;
+}
+
+.compose__main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  min-width: 0;
+}
+
+/* ---- Prompt ---------------------------------------------------------------------------
+ *
+ * The one element that matters. Given the most space, the reading typeface, and a hairline
+ * frame that lights up when focused — the interface equivalent of a sheet of paper under
+ * the lamp.
+ */
+
+.prompt {
+  position: relative;
+  border: var(--border-hairline) solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  transition:
+    border-color var(--duration) var(--ease-out),
+    box-shadow var(--duration) var(--ease-out);
+}
+
+.prompt:focus-within {
+  border-color: var(--accent);
+  box-shadow: var(--glow-accent);
+}
+
+.prompt__input {
+  display: block;
+  width: 100%;
+  padding: var(--space-5) var(--space-5) var(--space-3);
+  background: none;
+  border: 0;
+  resize: vertical;
+  font-family: var(--font-prose);
+  font-size: clamp(var(--text-lg), 2.2vw, var(--text-2xl));
+  line-height: var(--leading-normal);
+  font-variation-settings: "SOFT" 0, "WONK" 0, "opsz" 20;
+  color: var(--text);
+}
+
+.prompt__input:focus {
+  outline: none;
+}
+
+.prompt__input::placeholder {
+  color: var(--text-faint);
+  font-style: italic;
+}
+
+.prompt__footer {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 var(--space-5) var(--space-3);
+}
+
+.prompt__count {
+  font-size: var(--text-2xs);
+  color: var(--text-faint);
+}
+
+/* ---- Examples --------------------------------------------------------------------------- */
+
+.examples {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.examples__list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.examples__item {
+  padding: var(--space-2) var(--space-3);
+  border: var(--border-hairline) solid var(--border);
+  border-radius: var(--radius-full);
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  text-align: left;
+  transition:
+    color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    background var(--duration-fast) var(--ease-out);
+}
+
+.examples__item:hover {
+  color: var(--text);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.compose__voices {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+/* ---- Rail ---------------------------------------------------------------------------------- */
+
+.compose__rail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  padding: var(--space-5);
+  background: var(--surface);
+  border: var(--border-hairline) solid var(--border);
+  border-radius: var(--radius-lg);
+  position: sticky;
+  top: calc(var(--space-8) + var(--space-2));
+}
+
+.compose__submit {
+  width: 100%;
+}
+
+.compose__note {
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+  color: var(--text-faint);
+  text-align: center;
+}
+
+/* ---- Speed ------------------------------------------------------------------------------------ */
+
+.speed {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.speed__input {
+  flex: 1;
+  appearance: none;
+  height: 2px;
+  border-radius: var(--radius-full);
+  background: var(--border-strong);
+  cursor: pointer;
+}
+
+.speed__input::-webkit-slider-thumb {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--bg);
+  box-shadow: 0 0 8px -2px var(--accent);
+  cursor: grab;
+}
+
+.speed__input::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--bg);
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: grab;
+}
+
+.speed__value {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  min-width: 3.25rem;
+  text-align: right;
+}
+
+/* ---- Responsive ----------------------------------------------------------------------------------- */
+
+@media (width <= 900px) {
+  .compose__grid {
+    grid-template-columns: 1fr;
+  }
+
+  .compose__rail {
+    position: static;
+  }
+}

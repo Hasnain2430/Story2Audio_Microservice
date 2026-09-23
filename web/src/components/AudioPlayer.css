@@ -1,0 +1,163 @@
+/* The transport. Deliberately unlike a default `<audio controls>` strip. */
+
+.player {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  padding: var(--space-5);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--accent) 4%, var(--surface)),
+    var(--surface)
+  );
+  border: var(--border-hairline) solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.player__toggle {
+  flex: none;
+  width: 3.5rem;
+  height: 3.5rem;
+  border-radius: 50%;
+  padding: 0;
+}
+
+.player__toggle svg {
+  /* Nudged right so the play triangle looks optically centred in the circle. */
+  margin-left: 2px;
+}
+
+.player__toggle:has(rect) svg {
+  margin-left: 0;
+}
+
+.player__body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* ---- Waveform ------------------------------------------------------------------------ */
+
+.player__wave {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  height: 3rem;
+  cursor: pointer;
+}
+
+.player__bar {
+  flex: 1;
+  min-width: 1px;
+  border-radius: 1px;
+  background: var(--border-strong);
+  transition: background var(--duration-fast) linear;
+}
+
+.player__bar.is-played {
+  background: var(--accent);
+}
+
+.player__wave:hover .player__bar:not(.is-played) {
+  background: color-mix(in srgb, var(--accent) 35%, var(--border-strong));
+}
+
+@keyframes wave-loading {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.player__wave-loading,
+.player__wave-flat {
+  width: 100%;
+  height: 3px;
+  border-radius: var(--radius-full);
+  background: var(--border-strong);
+}
+
+.player__wave-loading {
+  animation: wave-loading 1.4s var(--ease-in-out) infinite;
+}
+
+/* ---- Meta row -------------------------------------------------------------------------- */
+
+.player__meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.player__time {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.player__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.player__rates {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.player__rate {
+  padding: 2px var(--space-2);
+  font-size: var(--text-2xs);
+  color: var(--text-faint);
+  border-radius: var(--radius-sm);
+  transition:
+    color var(--duration-fast) var(--ease-out),
+    background var(--duration-fast) var(--ease-out);
+}
+
+.player__rate:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.player__rate.is-active {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.player__download {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  text-decoration: none;
+  padding: 2px var(--space-2);
+  border: var(--border-hairline) solid var(--border);
+  border-radius: var(--radius-sm);
+  transition:
+    color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out);
+}
+
+.player__download:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+@media (width <= 640px) {
+  .player {
+    gap: var(--space-4);
+    padding: var(--space-4);
+  }
+
+  .player__toggle {
+    width: 3rem;
+    height: 3rem;
+  }
+
+  .player__wave {
+    height: 2.25rem;
+  }
+}

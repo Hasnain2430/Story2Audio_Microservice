@@ -1,0 +1,49 @@
+.recorder {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.recorder__controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.recorder__time {
+  font-size: var(--text-xs);
+  color: var(--err);
+}
+
+/* A VU meter, because the point is seeing the microphone work before committing. */
+.recorder__meter {
+  display: flex;
+  gap: 2px;
+  height: 1.5rem;
+  align-items: flex-end;
+}
+
+.recorder__bar {
+  flex: 1;
+  height: 35%;
+  border-radius: 1px;
+  background: var(--border);
+  transition:
+    background 60ms linear,
+    height 60ms linear;
+}
+
+.recorder__bar.is-lit {
+  height: 100%;
+  background: var(--accent);
+}
+
+/* The last few segments read as "too hot", the way a real meter does. */
+.recorder__bar:nth-last-child(-n + 4).is-lit {
+  background: var(--err);
+}
+
+.recorder__error {
+  font-size: var(--text-xs);
+  color: var(--err);
+}

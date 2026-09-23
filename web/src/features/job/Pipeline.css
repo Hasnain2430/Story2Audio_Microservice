@@ -1,0 +1,98 @@
+/* The pipeline line. Stations, not a progress bar: the stages are discrete and run on
+   different workers, and the drawing should say so. */
+
+.pipeline {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  list-style: none;
+  gap: var(--space-2);
+  padding: var(--space-5) var(--space-4);
+  background: var(--bg-raised);
+  border: var(--border-hairline) solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.pipeline__stage {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  text-align: center;
+}
+
+/* The connecting rail, drawn from each station to the next. */
+.pipeline__stage:not(:last-child)::before {
+  content: "";
+  position: absolute;
+  top: 5px;
+  left: calc(50% + 10px);
+  right: calc(-50% + 10px);
+  height: 1px;
+  background: var(--border);
+}
+
+.pipeline__stage.is-done:not(:last-child)::before {
+  background: color-mix(in srgb, var(--accent) 55%, var(--border));
+}
+
+.pipeline__node {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border-strong);
+  background: var(--bg-raised);
+  z-index: 1;
+  transition:
+    background var(--duration) var(--ease-out),
+    border-color var(--duration) var(--ease-out),
+    box-shadow var(--duration) var(--ease-out);
+}
+
+.pipeline__stage.is-done .pipeline__node {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.pipeline__stage.is-active .pipeline__node {
+  border-color: var(--accent);
+  background: var(--accent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 18%, transparent);
+  animation: node-breathe 1.8s var(--ease-in-out) infinite;
+}
+
+@keyframes node-breathe {
+  50% {
+    box-shadow: 0 0 0 8px color-mix(in srgb, var(--accent) 6%, transparent);
+  }
+}
+
+.pipeline.is-stopped .pipeline__stage.is-done .pipeline__node {
+  background: var(--halt);
+  border-color: var(--halt);
+}
+
+.pipeline__label {
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+}
+
+.pipeline__stage.is-done .pipeline__label,
+.pipeline__stage.is-active .pipeline__label {
+  color: var(--text-muted);
+}
+
+.pipeline__time {
+  font-size: var(--text-2xs);
+  color: var(--accent);
+}
+
+@media (width <= 640px) {
+  .pipeline {
+    padding: var(--space-4) var(--space-2);
+  }
+
+  .pipeline__label {
+    font-size: 0.625rem;
+  }
+}

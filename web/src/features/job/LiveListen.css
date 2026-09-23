@@ -1,0 +1,85 @@
+/*
+ * The live control sits above the tape and reads as an on-air panel: a single large
+ * action, a status line that is honest about what it is doing, and a pulse that is on
+ * only while audio is genuinely playing.
+ */
+
+.live {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  border: var(--border-hairline) solid var(--border);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(180deg, var(--surface), var(--bg-raised));
+  box-shadow: var(--shadow-sm);
+}
+
+.live__toggle {
+  flex: none;
+  width: 52px;
+  height: 52px;
+  padding: 0;
+  border-radius: var(--radius-full);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.live__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.live__label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  color: var(--text);
+}
+
+.live__meta {
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+}
+
+.live__pulse {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--text-faint);
+  flex: none;
+}
+
+/* Lit only while audio is actually coming out. Waiting for a segment is a different
+   state and must not look identical to playing. */
+.live__pulse.is-on {
+  background: var(--ok);
+  box-shadow: 0 0 0 0 color-mix(in oklab, var(--ok) 60%, transparent);
+  animation: live-pulse 1.8s var(--ease-out) infinite;
+}
+
+@keyframes live-pulse {
+  70% {
+    box-shadow: 0 0 0 7px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live__pulse.is-on {
+    animation: none;
+  }
+}
+
+@media (max-width: 40rem) {
+  .live {
+    align-items: flex-start;
+  }
+}

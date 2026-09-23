@@ -1,0 +1,150 @@
+/*
+ * Read-along typography.
+ *
+ * The page is prose first: at rest this must look like a printed story, not like a
+ * karaoke screen. So unspoken text carries full contrast and the highlight works by
+ * *warmth* rather than by a coloured block — the line being read is lit, the rest of the
+ * page is simply not lit.
+ *
+ * Everything that animates is `color`, `background-color` and `opacity` on inline spans.
+ * There is no layout animation anywhere in here, because a word changing width would
+ * reflow the paragraph on every frame.
+ */
+
+.transcript {
+  font-family: var(--font-prose);
+  font-size: var(--text-lg);
+  line-height: var(--leading-prose);
+  font-variation-settings: "SOFT" 0, "WONK" 0, "opsz" 14;
+  color: var(--text);
+  max-width: var(--measure);
+}
+
+.transcript__p + .transcript__p {
+  margin-top: var(--space-4);
+  text-indent: 1.4em;
+}
+
+/* This is prose, and it should announce itself as prose. */
+.transcript__p:first-child::first-letter {
+  float: left;
+  font-size: 3.1em;
+  line-height: 0.82;
+  padding: 0.08em 0.09em 0 0;
+  color: var(--accent);
+  font-variation-settings: "SOFT" 0, "WONK" 1, "opsz" 72;
+}
+
+.w {
+  /* Words must not be inline-block: that would break justification and let a highlighted
+     word change the line it sits on. */
+  transition: color var(--duration-fast) linear;
+}
+
+/*
+ * Only once there is a timeline does anything dim. Without one the story renders at full
+ * contrast and none of the rules below apply — the read-along is additive.
+ */
+.transcript--timed .w--timed {
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 2px;
+}
+
+.transcript--timed .w--timed:hover {
+  color: var(--text);
+}
+
+.transcript--timed .w--timed:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* Already read: legible, settled, out of the way. */
+.transcript--timed .w--timed.is-spoken {
+  color: var(--text);
+}
+
+/* The line currently being read lifts as a whole, so the eye can find it at a glance. */
+.transcript--timed .w--timed.is-current-line {
+  color: var(--text);
+  background-color: rgb(240 138 60 / 7%);
+  box-shadow: 0 0 0 1px rgb(240 138 60 / 5%);
+}
+
+/* The word being spoken right now. */
+.transcript--timed .w--timed.is-speaking {
+  color: var(--accent-bright);
+  background-color: rgb(240 138 60 / 16%);
+  text-shadow: 0 0 18px rgb(240 138 60 / 35%);
+}
+
+.transcript__caret {
+  display: inline-block;
+  width: 0.5em;
+  height: 1.05em;
+  margin-left: 0.08em;
+  vertical-align: text-bottom;
+  background: var(--accent);
+  animation: caret 1.05s step-end infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .w,
+  .transcript__caret {
+    transition: none;
+    animation: none;
+  }
+}
+
+/*
+ * Dialogue is tinted by who is speaking, matching the tape exactly: one character, one
+ * colour, everywhere on the page. The tint is carried on the *speaking* and *spoken*
+ * states rather than on the resting text, so a page at rest still reads as prose rather
+ * than as a colour-coded document.
+ */
+.transcript--timed .w--timed[data-voice] {
+  --voice-colour: var(--accent);
+}
+
+.transcript--timed .w--timed[data-voice='0'] {
+  --voice-colour: var(--ember-400);
+}
+.transcript--timed .w--timed[data-voice='1'] {
+  --voice-colour: #8fc4ea;
+}
+.transcript--timed .w--timed[data-voice='2'] {
+  --voice-colour: #bda6e6;
+}
+.transcript--timed .w--timed[data-voice='3'] {
+  --voice-colour: #9ad4b3;
+}
+
+/* The line being read, in its character's colour. */
+.transcript--timed .w--timed[data-voice].is-current-line {
+  background-color: color-mix(in oklab, var(--voice-colour) 9%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--voice-colour) 7%, transparent);
+}
+
+.transcript--timed .w--timed[data-voice].is-speaking {
+  color: var(--voice-colour);
+  background-color: color-mix(in oklab, var(--voice-colour) 18%, transparent);
+  text-shadow: 0 0 18px color-mix(in oklab, var(--voice-colour) 40%, transparent);
+}
+
+/* Quoted speech reads as speech even before it is played. */
+.transcript--timed .w--timed[data-voice] {
+  font-style: italic;
+}
+
+/*
+ * Story text that has not been recorded yet.
+ *
+ * Without this the un-recorded remainder of a live story is drawn at full strength while
+ * the part you can already play is dimmed — brightest exactly where there is nothing to
+ * listen to. Held back until its segment arrives.
+ */
+.transcript--timed .w.is-pending {
+  color: var(--text-faint);
+  transition: color var(--duration-slow, 320ms) linear;
+}

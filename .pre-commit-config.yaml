@@ -1,0 +1,37 @@
+# Install once with: uv run pre-commit install
+#
+# These hooks are the same checks CI runs, so a green commit is a green pipeline.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: ^legacy/
+      - id: end-of-file-fixer
+        exclude: ^legacy/
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=2048]
+      - id: detect-private-key
+      - id: mixed-line-ending
+        args: [--fix=lf]
+        exclude: ^legacy/
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.8
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy
+        entry: uv run mypy packages services
+        language: system
+        types: [python]
+        pass_filenames: false
+        exclude: ^legacy/

@@ -1,35 +1,41 @@
-# Python cache
-__pycache__/
-*.pyc
-*.pyo
+# Each service image copies only what it needs; this is the shared floor.
 
-# Virtual environments
-.venv/
-venv/
-
-# Git
 .git/
+.github/
 .gitignore
 
-# Large models and checkpoints
+# The v1 system. Kept in the repo for reference and benchmarking, never shipped.
+legacy/
+docs/
+
+# Local environments and caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+node_modules/
+dist/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Tests and fixtures are not part of any runtime image
+tests/
+
+# Model weights are mounted or downloaded at runtime, never baked in
 *.pth
 *.pt
-*.bin
-tts_models/
+*.ckpt
 models/
-datasets/
 
-# Audio output and temp files (but not voices/)
+# Local runtime artifacts
 output/
-frontend_received_audio.wav
-temp_output.wav
-sample.wav
-sample2.wav
-
-# System files
-.DS_Store
-Thumbs.db
-
-# Docker build files themselves (optional, since they're needed anyway)
-# Dockerfile
-# .dockerignore
+tmp/
+*.log

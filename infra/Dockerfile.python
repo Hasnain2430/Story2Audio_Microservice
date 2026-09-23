@@ -1,0 +1,77 @@
+# Shared image for the three pure-Python services: gateway, story-worker, tts-worker.
+#
+# One Dockerfile with a build argument rather than three near-identical ones. They share
+# a lockfile, a base image and a layer structure; the only differences are which
+# workspace package is installed and what the container runs.
+#
+# `tts-engine` has its own Dockerfile because it needs a CUDA base image.
+
+ARG PYTHON_VERSION=3.11
+
+# --- Builder -------------------------------------------------------------------------------
+
+FROM python:${PYTHON_VERSION}-slim-bookworm AS builder
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy
+
+COPY --from=ghcr.io/astral-sh/uv:0.9 /uv /usr/local/bin/uv
+
+WORKDIR /app
+
+#: Which workspace package to install, e.g. story2audio-gateway.
+ARG PACKAGE
+
+# Dependency layer first, and only the files that describe dependencies. Editing
+# application code cannot invalidate this layer -- the inversion that made every v1
+# image rebuild its entire dependency tree.
+COPY pyproject.toml uv.lock ./
+COPY packages/shared/pyproject.toml packages/shared/
+COPY services/gateway/pyproject.toml services/gateway/
+COPY services/story_worker/pyproject.toml services/story_worker/
+COPY services/tts_worker/pyproject.toml services/tts_worker/
+COPY services/tts_engine/pyproject.toml services/tts_engine/
+
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --no-install-project --package "${PACKAGE}"
+
+# Source, plus the contract the gRPC stubs are generated from.
+COPY proto/ proto/
+COPY infra/scripts/gen_proto.py infra/scripts/
+COPY packages/ packages/
+COPY services/ services/
+
+# Generated at build time so a stale committed stub cannot drift from the .proto.
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv run --no-dev --with grpcio-tools python infra/scripts/gen_proto.py \
+    && uv sync --frozen --no-dev --package "${PACKAGE}"
+
+# --- Runtime --------------------------------------------------------------------------------
+
+FROM python:${PYTHON_VERSION}-slim-bookworm AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/app/.venv/bin:${PATH}"
+
+# libsndfile for reading uploaded voice samples. No ffmpeg: MP3 encoding uses lameenc,
+# and the trim/fade/join work v1 needed pydub for is numpy here.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libsndfile1 \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN useradd --create-home --uid 10001 app
+
+COPY --from=builder --chown=app:app /app /app
+
+# Reference voices, seeded into the catalogue on first boot.
+COPY --chown=app:app assets/ /app/assets/
+
+USER app
+WORKDIR /app
+
+# Overridden per service in compose.
+CMD ["python", "-c", "raise SystemExit('set a command for this service')"]

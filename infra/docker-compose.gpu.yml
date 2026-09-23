@@ -1,0 +1,34 @@
+# Overlay that runs `tts-engine` against a local CUDA device.
+#
+# Used with the main stack (Phase 5):
+#
+#     docker compose -f infra/docker-compose.yml -f infra/docker-compose.gpu.yml up
+#
+# Without this overlay the engine runs its stub backend, which renders a tone rather
+# than speech -- enough to exercise the whole pipeline on a machine with no GPU.
+
+services:
+  tts-engine:
+    build:
+      context: ..
+      dockerfile: services/tts_engine/Dockerfile
+      # CUDA base plus the `gpu` extra: torch and coqui-tts, real synthesis.
+      target: gpu
+    environment:
+      TTS_BACKEND: xtts
+      TTS_DEVICE: cuda
+      TTS_MAX_CONCURRENT_INFERENCES: 1
+    volumes:
+      # Model weights live on a named volume, never in the image. A replica that
+      # restarts warms from local disk instead of re-downloading several gigabytes.
+      - tts-models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+volumes:
+  tts-models:
