@@ -156,6 +156,17 @@ export const api = {
 }
 
 /** WebSocket URL for a job's event stream, on whichever origin serves the API. */
+/**
+ * Absolute URL for one rendered segment's audio.
+ *
+ * Built through the same base as every other call rather than as a bare path: with
+ * `VITE_API_ORIGIN` set, a relative fetch would go to whatever host is serving the
+ * frontend, which in a split deployment is not the API at all.
+ */
+export function segmentAudioUrl(jobId: string, index: number): string {
+  return `${API_BASE}/v1/jobs/${jobId}/segments/${index}/audio`
+}
+
 export function jobEventsUrl(jobId: string): string {
   const base = API_BASE !== '' ? API_BASE : window.location.origin
   const url = new URL(`/v1/jobs/${jobId}/events`, base)

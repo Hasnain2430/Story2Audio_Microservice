@@ -10,10 +10,17 @@
  * takes over, the page says so and keeps working — a fallback nobody can see is a
  * fallback nobody tests.
  *
- * Once the audio exists, the story becomes a read-along: the player and the transcript
- * share one clock (`usePlayback`), so the line being spoken is lit and any word can be
- * clicked to seek. That is the point of the segment timeline the worker records — it
- * turns a seven minute file into something you can navigate by reading.
+ * Once audio exists, the story becomes a read-along: the line being spoken is lit and any
+ * word can be clicked to seek. That is the point of the segment timeline the worker
+ * records — it turns a seven minute file into something you can navigate by reading.
+ *
+ * There are two ways audio can exist here, and the page deliberately treats them the
+ * same. While a job is running the segments arrive one at a time and are played through
+ * the Web Audio API as they land; when it is finished there is a single assembled file
+ * played through an `<audio>` element. Both expose a position in the story, and the tape
+ * and transcript are given whichever one is live. Nothing downstream knows which it is —
+ * that indistinguishability is what makes listening-while-recording a feature rather than
+ * a second, lesser mode.
  */
 
 import { useParams } from 'react-router'
@@ -23,11 +30,14 @@ import { isTerminal, type Job } from '@/api/types'
 import { useCancelJob } from '@/hooks/useCancelJob'
 import { useJob } from '@/hooks/useJob'
 import { useJobEvents, type Transport } from '@/hooks/useJobEvents'
+import { useLivePlayback } from '@/hooks/useLivePlayback'
 import { usePlayback } from '@/hooks/usePlayback'
 import { formatElapsed, secondsBetween, STATUS_ACTIVITY } from '@/lib/format'
 import { AudioPlayer } from '@/components/AudioPlayer'
 import { Banner, Button, Card, SegmentMeter, StatusLight } from '@/components/primitives'
+import { LiveListen } from '@/features/job/LiveListen'
 import { Pipeline } from '@/features/job/Pipeline'
+import { Tape } from '@/features/job/Tape'
 import { Transcript } from '@/features/job/Transcript'
 import '@/features/job/JobPage.css'
 
@@ -35,12 +45,13 @@ export function JobPage() {
   const { jobId } = useParams<{ jobId: string }>()
   const job = useJob(jobId)
   const data = job.data
-  const live = useJobEvents(jobId, data !== undefined && !isTerminal(data.status))
+  const events = useJobEvents(jobId, data !== undefined && !isTerminal(data.status))
   const cancel = useCancelJob(jobId ?? '')
 
-  // Declared before the early returns: hooks cannot be called conditionally, and the
-  // player is inert until an element is attached to it anyway.
+  // Declared before the early returns: hooks cannot be called conditionally, and both
+  // players are inert until they are given something to play.
   const playback = usePlayback(data?.audio?.[0]?.duration_seconds ?? 0)
+  const live = useLivePlayback(jobId, events.segments)
 
   if (job.isLoading) {
     return <div className="job__loading">Tuning in…</div>
@@ -57,19 +68,30 @@ export function JobPage() {
   const running = !isTerminal(data.status)
   // While tokens are arriving the streamed text leads; once the story is persisted the
   // stored copy is authoritative, and a page reload shows that copy with no gap.
-  const story = data.story_text ?? live.streamedText
-  const segmentsTotal = live.segmentsTotal || (data.segment_count ?? 0)
+  const story = data.story_text ?? events.streamedText
+  const segmentsTotal = events.segmentsTotal || (data.segment_count ?? 0)
   const audio = data.audio ?? []
-  // Absent for a job that is still running, and for any job finished before the timeline
-  // was recorded. The transcript renders plain prose in that case.
-  const segments = data.segments ?? []
+
+  // Two sources for the same list. The record is written as each segment is rendered,
+  // so a reload recovers what already exists; the WebSocket delivers the rest live.
+  // Whichever is further ahead wins — the stored copy lags by one segment while a job is
+  // running, and the streamed copy is empty for a page that was just opened.
+  const streamed = events.segments
+  const stored = data.segments ?? []
+  const segments = stored.length >= streamed.length ? stored : streamed
+
+  // Whichever player currently owns the story's clock. The finished file wins when it
+  // exists, because it is the authoritative render.
+  const position = audio.length > 0 ? playback.currentTime : live.currentTime
+  const isPlaying = audio.length > 0 ? playback.playing : live.playing
+  const seek = audio.length > 0 ? playback.seek : live.seek
 
   return (
     <article className="job">
       <header className="job__head rise" style={{ '--i': 0 } as React.CSSProperties}>
         <div className="job__head-top">
           <StatusLight status={data.status} />
-          <TransportBadge transport={live.transport} running={running} />
+          <TransportBadge transport={events.transport} running={running} />
         </div>
 
         <h1 className="job__prompt">{data.prompt}</h1>
@@ -90,7 +112,7 @@ export function JobPage() {
         </Banner>
       )}
 
-      {live.recoveredFromGap && (
+      {events.recoveredFromGap && (
         <Banner tone="warn">
           Some live updates were missed, so the page re-synced from the server. Nothing was
           lost.
@@ -108,11 +130,30 @@ export function JobPage() {
             )}
           </div>
           {segmentsTotal > 0 ? (
-            <SegmentMeter done={live.segmentsDone} total={segmentsTotal} />
+            <SegmentMeter done={events.segmentsDone} total={segmentsTotal} />
           ) : (
             <p className="job__progress-wait mono">waiting for the writer…</p>
           )}
         </Card>
+      )}
+
+      {audio.length === 0 && segments.length > 0 && (
+        <div className="rise" style={{ '--i': 2 } as React.CSSProperties}>
+          <LiveListen playback={live} ready={segments.length} total={segmentsTotal} />
+        </div>
+      )}
+
+      {segments.length > 0 && (
+        <div className="rise" style={{ '--i': 2 } as React.CSSProperties}>
+          <Tape
+            segments={segments}
+            currentTime={position}
+            duration={audio[0]?.duration_seconds}
+            expected={segmentsTotal}
+            bufferedUntil={audio.length > 0 ? undefined : live.bufferedUntil}
+            onSeek={seek}
+          />
+        </div>
       )}
 
       {audio.length > 0 && (
@@ -132,10 +173,11 @@ export function JobPage() {
           <Transcript
             story={story}
             segments={segments}
-            currentTime={playback.currentTime}
-            playing={playback.playing}
-            onSeek={playback.seek}
+            currentTime={position}
+            playing={isPlaying}
+            onSeek={seek}
             writing={data.status === 'writing'}
+            rendering={running}
           />
         </section>
       )}

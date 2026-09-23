@@ -11,6 +11,7 @@ import io
 import itertools
 import json
 import wave
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -444,12 +445,18 @@ class StubStorage:
     #: Any key containing this substring raises on write. Used to prove that losing a
     #: streamed segment costs early playback and not the recording.
     fail_on: str | None = None
+    #: Called after each write, so a test can inspect the world mid-run. The pipeline
+    #: uploads a segment and then records it, so this is the only moment at which
+    #: "what a client would see right now" is observable.
+    on_put: Callable[[str], None] | None = None
 
     def put_bytes(self, key: str, data: bytes, *, content_type: str) -> None:
         if self.fail_on is not None and self.fail_on in key:
             raise RuntimeError("object store is having a moment")
         self.objects[key] = data
         self.content_types[key] = content_type
+        if self.on_put is not None:
+            self.on_put(key)
 
     def put_audio(self, key: str, data: bytes, audio_format: AudioFormat) -> None:
         self.put_bytes(key, data, content_type=f"audio/{audio_format.value}")
@@ -868,6 +875,46 @@ def test_every_segment_is_published_while_the_job_is_still_running(
         assert f"segment-{position:04d}.wav" in " ".join(storage.objects)
         # No URL in the event: signing here would bake a TTL into a durable event.
         assert "url" not in frame
+
+
+def test_the_timeline_is_readable_before_the_job_finishes(
+    sessions: sessionmaker[Session],
+    publisher: SyncEventPublisher,
+    storage: StubStorage,
+    settings: TtsWorkerSettings,
+    written_job: Job,
+) -> None:
+    """A client that reloads mid-story must still be able to play what exists.
+
+    Segments are announced over Redis pub/sub, which keeps no history: a browser that
+    reloads, or opens the page late, is told about none of the segments already rendered.
+    If the only stored copy of the timeline appeared when the job finished, that client
+    could see 0 of 22 parts while twenty of them sat in object storage — and the compose
+    page promises you can close the tab and come back.
+    """
+    seen: list[int] = []
+
+    def inspect(key: str) -> None:
+        if "segment-" not in key:
+            return
+        # The upload happens first, then the row is written, so the count observed here
+        # is one behind — which is exactly the window a reloading client can land in.
+        with sessions() as session:
+            job = session.get(Job, written_job.id)
+            assert job is not None
+            stored = job.segment_timeline or []
+            assert len(stored) == len(seen)
+        seen.append(len(seen))
+
+    storage.on_put = inspect
+    run(sessions, publisher, StubEngine(), storage, settings, written_job.id)
+
+    assert len(seen) > 1, "the story must render more than one segment to prove this"
+
+    # And by the end, the stored timeline covers everything.
+    finished = reload_job(sessions, written_job.id)
+    assert finished.segment_timeline is not None
+    assert len(finished.segment_timeline) == len(seen)
 
 
 def test_a_published_segment_lands_where_the_final_track_puts_it(

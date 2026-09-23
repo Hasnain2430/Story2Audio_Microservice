@@ -195,6 +195,22 @@ export function progressWithin(
   return clamp((seconds - segment.start_seconds) / span)
 }
 
+/**
+ * A stable colour slot per speaking character, in order of first appearance.
+ *
+ * Assigned by order rather than by hashing the name: a hash puts two characters on
+ * adjacent hues often enough to matter, and the entire purpose is telling them apart at a
+ * glance. Shared by the transcript and the tape so one character is one colour everywhere
+ * on the page.
+ */
+export function voiceIndexes(segments: SpokenSegment[]): Map<string, number> {
+  const seen = new Map<string, number>()
+  for (const segment of segments) {
+    if (segment.speaker && !seen.has(segment.speaker)) seen.set(segment.speaker, seen.size)
+  }
+  return seen
+}
+
 /** The time a word begins, for seeking when one is clicked. */
 export function timeOfWord(segments: SpokenSegment[], word: Word): number | null {
   const segment = segments[word.segment]

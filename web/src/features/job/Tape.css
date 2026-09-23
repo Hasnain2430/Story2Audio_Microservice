@@ -1,0 +1,144 @@
+/*
+ * The tape.
+ *
+ * Reads as a strip of recording tape or a mixing-desk arrangement view: blocks of
+ * material laid on a dark bed, one lane, in time order. Voice colours are deliberately
+ * close in luminance so that no character looks louder than another — they differ in hue,
+ * not in weight, because the strip should read as one recording rather than a chart with
+ * a highlighted series.
+ */
+
+.tape {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.tape__strip {
+  position: relative;
+  height: 46px;
+  border-radius: var(--radius);
+  background: var(--ink-900);
+  box-shadow: inset 0 0 0 1px var(--border);
+  overflow: hidden;
+  cursor: pointer;
+}
+
+/* How far the audio has actually been fetched, under the blocks. */
+.tape__buffered {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: rgb(255 255 255 / 3%);
+  transition: width var(--duration-fast) linear;
+}
+
+.tape__block {
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  border-radius: 2px;
+  background: var(--voice-colour);
+  opacity: 0.55;
+  /* Segments appear as they are rendered; they should arrive rather than blink. */
+  animation: tape-arrive var(--duration-slow, 320ms) var(--ease-out) both;
+  transition: opacity var(--duration-fast) linear, transform var(--duration-fast) var(--ease-out);
+}
+
+.tape__block.is-active {
+  opacity: 1;
+  transform: scaleY(1.22);
+  box-shadow: 0 0 18px -2px var(--voice-colour);
+}
+
+/* Narration is the bed the story sits on: present, not competing. */
+.tape__block[data-voice='narration'] {
+  --voice-colour: var(--paper-600);
+  top: 14px;
+  bottom: 14px;
+}
+
+.tape__block[data-voice='0'] {
+  --voice-colour: var(--ember-500);
+}
+
+.tape__block[data-voice='1'] {
+  --voice-colour: #6aa9d8;
+}
+
+.tape__block[data-voice='2'] {
+  --voice-colour: #9d86c9;
+}
+
+.tape__block[data-voice='3'] {
+  --voice-colour: #7fb996;
+}
+
+.tape__playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--text);
+  box-shadow: 0 0 12px var(--text);
+  pointer-events: none;
+}
+
+.tape__legend {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.tape__key {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.tape__key::before {
+  content: '';
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--voice-colour);
+}
+
+.tape__key[data-voice='narration'] {
+  --voice-colour: var(--paper-600);
+}
+.tape__key[data-voice='0'] {
+  --voice-colour: var(--ember-500);
+}
+.tape__key[data-voice='1'] {
+  --voice-colour: #6aa9d8;
+}
+.tape__key[data-voice='2'] {
+  --voice-colour: #9d86c9;
+}
+.tape__key[data-voice='3'] {
+  --voice-colour: #7fb996;
+}
+
+.tape__count {
+  margin-left: auto;
+  color: var(--text-faint);
+}
+
+@keyframes tape-arrive {
+  from {
+    opacity: 0;
+    transform: scaleX(0.4);
+    transform-origin: left center;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tape__block {
+    animation: none;
+    transition: none;
+  }
+}

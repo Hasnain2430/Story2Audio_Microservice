@@ -96,3 +96,55 @@
     animation: none;
   }
 }
+
+/*
+ * Dialogue is tinted by who is speaking, matching the tape exactly: one character, one
+ * colour, everywhere on the page. The tint is carried on the *speaking* and *spoken*
+ * states rather than on the resting text, so a page at rest still reads as prose rather
+ * than as a colour-coded document.
+ */
+.transcript--timed .w--timed[data-voice] {
+  --voice-colour: var(--accent);
+}
+
+.transcript--timed .w--timed[data-voice='0'] {
+  --voice-colour: var(--ember-400);
+}
+.transcript--timed .w--timed[data-voice='1'] {
+  --voice-colour: #8fc4ea;
+}
+.transcript--timed .w--timed[data-voice='2'] {
+  --voice-colour: #bda6e6;
+}
+.transcript--timed .w--timed[data-voice='3'] {
+  --voice-colour: #9ad4b3;
+}
+
+/* The line being read, in its character's colour. */
+.transcript--timed .w--timed[data-voice].is-current-line {
+  background-color: color-mix(in oklab, var(--voice-colour) 9%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--voice-colour) 7%, transparent);
+}
+
+.transcript--timed .w--timed[data-voice].is-speaking {
+  color: var(--voice-colour);
+  background-color: color-mix(in oklab, var(--voice-colour) 18%, transparent);
+  text-shadow: 0 0 18px color-mix(in oklab, var(--voice-colour) 40%, transparent);
+}
+
+/* Quoted speech reads as speech even before it is played. */
+.transcript--timed .w--timed[data-voice] {
+  font-style: italic;
+}
+
+/*
+ * Story text that has not been recorded yet.
+ *
+ * Without this the un-recorded remainder of a live story is drawn at full strength while
+ * the part you can already play is dimmed — brightest exactly where there is nothing to
+ * listen to. Held back until its segment arrives.
+ */
+.transcript--timed .w.is-pending {
+  color: var(--text-faint);
+  transition: color var(--duration-slow, 320ms) linear;
+}

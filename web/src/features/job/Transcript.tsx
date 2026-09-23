@@ -25,6 +25,7 @@ import {
   progressWithin,
   segmentAt,
   timeOfWord,
+  voiceIndexes,
   type Word,
 } from '@/lib/transcript'
 import '@/features/job/Transcript.css'
@@ -37,6 +38,16 @@ interface TranscriptProps {
   onSeek: (seconds: number) => void
   /** True while tokens are still arriving, which is the one time a caret means something. */
   writing?: boolean
+  /**
+   * True while segments are still being rendered.
+   *
+   * Changes what *untimed* text means. In a finished story the only untimed text is the
+   * punctuation between segments, which should read at full strength. While rendering,
+   * everything past the last finished segment is also untimed — and leaving that at full
+   * strength drew the not-yet-recorded part of the story more brightly than the part you
+   * could already play, which is exactly backwards.
+   */
+  rendering?: boolean
 }
 
 export function Transcript({
@@ -46,10 +57,14 @@ export function Transcript({
   playing,
   onSeek,
   writing = false,
+  rendering = false,
 }: TranscriptProps) {
   // Rebuilt only when the text or the timings change. This component re-renders on
   // every animation frame while audio plays, and the parse walks the whole story.
   const paragraphs = useMemo(() => buildTranscript(story, segments), [story, segments])
+
+  // One character, one colour, the same one the tape uses.
+  const voices = useMemo(() => voiceIndexes(segments), [segments])
 
   const active = segments.length > 0 ? segmentAt(segments, currentTime) : -1
   const progress = active >= 0 ? progressWithin(segments, active, currentTime) : 0
@@ -83,6 +98,8 @@ export function Transcript({
   }, [active, playing])
 
   const timed = segments.length > 0
+  // Everything past the last rendered segment is still to come.
+  const renderedThrough = rendering ? Math.max(0, ...segments.map((s) => s.end_char)) : Infinity
 
   return (
     <div className={`transcript ${timed ? 'transcript--timed' : ''}`}>
@@ -95,6 +112,8 @@ export function Transcript({
               active={active}
               progress={progress}
               segments={segments}
+              voices={voices}
+              pending={word.segment < 0 && word.offset >= renderedThrough}
               onSeek={onSeek}
               anchorRef={word.offset === anchorOffset ? activeRef : undefined}
             />
@@ -112,11 +131,23 @@ interface WordSpanProps {
   active: number
   progress: number
   segments: SpokenSegment[]
+  voices: Map<string, number>
+  /** Not yet rendered, as opposed to never timed. */
+  pending: boolean
   onSeek: (seconds: number) => void
   anchorRef?: React.RefObject<HTMLSpanElement | null> | undefined
 }
 
-function WordSpan({ word, active, progress, segments, onSeek, anchorRef }: WordSpanProps) {
+function WordSpan({
+  word,
+  active,
+  progress,
+  segments,
+  voices,
+  pending,
+  onSeek,
+  anchorRef,
+}: WordSpanProps) {
   const inActiveSegment = word.segment >= 0 && word.segment === active
   const spoken = word.segment >= 0 && (word.segment < active || (inActiveSegment && word.until <= progress))
   const speaking = inActiveSegment && word.at <= progress && progress < word.until
@@ -134,15 +165,20 @@ function WordSpan({ word, active, progress, segments, onSeek, anchorRef }: WordS
   // Untimed text — quotation marks, the spacing around them — is not interactive: there
   // is no moment in the audio to send someone to.
   if (word.segment < 0) {
-    return <span className="w">{word.text}</span>
+    return <span className={`w ${pending ? 'is-pending' : ''}`}>{word.text}</span>
   }
 
   const seconds = timeOfWord(segments, word)
+  const speaker = segments[word.segment]?.speaker
+  // Dialogue is tinted by who says it, so a scene is readable as a scene rather than as
+  // an undifferentiated block of quoted text. Narration carries no tint at all.
+  const voice = speaker ? voices.get(speaker) : undefined
 
   return (
     <span
       ref={anchorRef ?? undefined}
       className={className}
+      data-voice={voice === undefined ? undefined : voice % 4}
       role="button"
       tabIndex={0}
       onClick={() => {

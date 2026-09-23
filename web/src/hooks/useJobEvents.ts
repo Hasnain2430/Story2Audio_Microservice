@@ -18,7 +18,7 @@ import { useQueryClient } from '@tanstack/react-query'
 
 import { api, jobEventsUrl } from '@/api/client'
 import { isTerminalEvent, parseJobEvent, type JobEvent } from '@/api/events'
-import type { Job } from '@/api/types'
+import type { Job, SpokenSegment } from '@/api/types'
 import { isTerminal } from '@/api/types'
 import { jobKeys } from '@/hooks/queryKeys'
 
@@ -28,6 +28,14 @@ export type Transport = 'connecting' | 'live' | 'polling' | 'closed'
 interface JobEventsState {
   /** Text accumulated from `token` frames, shown while the story is being written. */
   streamedText: string
+  /**
+   * Segments that have been rendered and can already be played, in order.
+   *
+   * This is what makes the audio arrive while it is still being made. It is the same
+   * shape the finished job returns in `segments`, so the player and the transcript do
+   * not care whether a story is still rendering or was finished yesterday.
+   */
+  segments: SpokenSegment[]
   segmentsDone: number
   segmentsTotal: number
   transport: Transport
@@ -37,6 +45,7 @@ interface JobEventsState {
 
 const INITIAL: JobEventsState = {
   streamedText: '',
+  segments: [],
   segmentsDone: 0,
   segmentsTotal: 0,
   transport: 'connecting',
@@ -103,6 +112,28 @@ export function useJobEvents(jobId: string | undefined, enabled: boolean): JobEv
             prev ? { ...prev, story_text: event.text } : prev,
           )
           break
+
+        case 'segment_ready': {
+          const arrived: SpokenSegment = {
+            index: event.index,
+            kind: event.kind,
+            text: event.text,
+            speaker: event.speaker,
+            start_char: event.start_char,
+            end_char: event.end_char,
+            start_seconds: event.start_seconds,
+            end_seconds: event.end_seconds,
+          }
+          setState((s) => {
+            // Replace rather than append: a reconnect can redeliver a segment, and two
+            // copies of one segment would be played twice.
+            const next = s.segments.filter((existing) => existing.index !== arrived.index)
+            next.push(arrived)
+            next.sort((a, b) => a.index - b.index)
+            return { ...s, segments: next, segmentsTotal: event.total }
+          })
+          break
+        }
 
         case 'progress':
           setState((s) => ({ ...s, segmentsDone: event.done, segmentsTotal: event.total }))

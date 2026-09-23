@@ -11,7 +11,13 @@
 import { describe, expect, it } from 'vitest'
 
 import type { SpokenSegment } from '@/api/types'
-import { buildTranscript, progressWithin, segmentAt, timeOfWord } from '@/lib/transcript'
+import {
+  buildTranscript,
+  progressWithin,
+  segmentAt,
+  timeOfWord,
+  voiceIndexes,
+} from '@/lib/transcript'
 
 function segment(partial: Partial<SpokenSegment> & Pick<SpokenSegment, 'start_char' | 'end_char'>): SpokenSegment {
   return {
@@ -164,5 +170,36 @@ describe('timeOfWord', () => {
 
     if (!untimed) throw new Error('expected the quotation marks to be untimed')
     expect(timeOfWord(SEGMENTS, untimed)).toBeNull()
+  })
+})
+
+describe('voiceIndexes', () => {
+  it('assigns a slot per character, in order of first appearance', () => {
+    const voices = voiceIndexes([
+      segment({ index: 0, start_char: 0, end_char: 5 }),
+      segment({ index: 1, kind: 'dialogue', speaker: 'Mara', start_char: 6, end_char: 10 }),
+      segment({ index: 2, kind: 'dialogue', speaker: 'Lila', start_char: 11, end_char: 15 }),
+      segment({ index: 3, kind: 'dialogue', speaker: 'Mara', start_char: 16, end_char: 20 }),
+    ])
+
+    expect(voices.get('Mara')).toBe(0)
+    expect(voices.get('Lila')).toBe(1)
+    expect(voices.size).toBe(2)
+  })
+
+  it('gives narration no slot at all', () => {
+    // Narration is the bed the story sits on, not a character competing for a colour.
+    const voices = voiceIndexes([segment({ index: 0, start_char: 0, end_char: 5 })])
+
+    expect(voices.size).toBe(0)
+  })
+
+  it('is stable, so a character keeps one colour across a re-render', () => {
+    const segments = [
+      segment({ index: 0, kind: 'dialogue', speaker: 'Tom', start_char: 0, end_char: 4 }),
+      segment({ index: 1, kind: 'dialogue', speaker: 'Lily', start_char: 5, end_char: 9 }),
+    ]
+
+    expect([...voiceIndexes(segments)]).toEqual([...voiceIndexes(segments)])
   })
 })

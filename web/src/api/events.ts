@@ -13,9 +13,14 @@
  *    the database, so a late or reconnecting client starts from truth.
  *
  * On a gap the client refetches rather than replaying: Redis pub/sub keeps no history.
+ *
+ * `segment_ready` was added without bumping the version, which this contract allows: an
+ * older client drops frames of an unknown *type* and keeps working from the terminal
+ * event, whereas a version bump would make it drop every frame. Adding a variant is
+ * backwards compatible; changing the meaning of one would not be.
  */
 
-import type { AudioAsset, ErrorCode, JobStatus } from '@/api/types'
+import type { AudioAsset, ErrorCode, JobStatus, SegmentKind } from '@/api/types'
 
 /** Bumped only on a breaking change. A frame from an unknown version is ignored. */
 export const EVENT_SCHEMA_VERSION = 1
@@ -43,6 +48,19 @@ export interface StoryDoneEvent extends BaseEvent {
   type: 'story_done'
   text: string
   word_count: number
+}
+
+export interface SegmentReadyEvent extends BaseEvent {
+  type: 'segment_ready'
+  index: number
+  total: number
+  kind: SegmentKind
+  text: string
+  speaker: string | null
+  start_char: number
+  end_char: number
+  start_seconds: number
+  end_seconds: number
 }
 
 export interface ProgressEvent extends BaseEvent {
@@ -73,6 +91,7 @@ export type JobEvent =
   | TokenEvent
   | StoryDoneEvent
   | ProgressEvent
+  | SegmentReadyEvent
   | DoneEvent
   | FailedEvent
   | CancelledEvent
@@ -88,6 +107,7 @@ const KNOWN_TYPES = new Set<string>([
   'token',
   'story_done',
   'progress',
+  'segment_ready',
   'done',
   'failed',
   'cancelled',

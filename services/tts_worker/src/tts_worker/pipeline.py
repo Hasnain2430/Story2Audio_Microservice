@@ -279,7 +279,14 @@ def _synthesize_segments(
 
         if placed is not None:
             _publish_segment(
-                session_factory, publisher, storage, job_id, placed, assembler.count - 1, total
+                session_factory,
+                publisher,
+                storage,
+                job_id,
+                placed,
+                assembler.count - 1,
+                total,
+                assembler.timeline(),
             )
 
         _publish_progress(session_factory, publisher, job_id, done=index, total=total)
@@ -295,6 +302,7 @@ def _publish_segment(
     placed: _Placed,
     index: int,
     total: int,
+    timeline: list[dict[str, Any]],
 ) -> None:
     """Upload one rendered segment and announce that it can be played.
 
@@ -335,6 +343,12 @@ def _publish_segment(
         )
 
     with session_scope(session_factory) as session:
+        # Persist the timeline so far, not only announce it. Redis pub/sub keeps no
+        # history, so a client that reloads or connects late hears about none of the
+        # segments already rendered -- and without a stored copy it cannot play them
+        # either, which breaks the promise the compose page makes about closing the tab
+        # and coming back. One small update per segment buys recovery for free.
+        session.query(Job).filter(Job.id == job_id).update({"segment_timeline": timeline})
         publisher.publish(session, job_id, build)
 
 
